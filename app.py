@@ -89,6 +89,19 @@ with st.sidebar:
     species_label = st.selectbox("Organism", list(SPECIES), index=0)
     species = SPECIES[species_label]
     network_type = st.selectbox("STRING network type", ["functional", "physical"], index=0)
+    flavor_options = ["evidence", "confidence", "actions"]
+    if network_type == "functional":
+        flavor_options.append("typed")
+    network_flavor = st.selectbox(
+        "STRING native figure style",
+        flavor_options,
+        index=0,
+        help=(
+            "Evidence shows evidence-channel edge colors; confidence emphasizes combined "
+            "interaction confidence; actions shows predicted molecular actions; typed is "
+            "available for functional networks."
+        ),
+    )
     score_label = st.select_slider(
         "Minimum STRING interaction score",
         options=[150, 400, 700, 900],
@@ -155,11 +168,12 @@ if run:
 
     with st.spinner("Mapping targets and querying STRING…"):
         try:
-            mapping, network, enrichment = run_string_workflow(
+            mapping, network, enrichment, native_media = run_string_workflow(
                 targets,
                 species,
                 score_label,
                 network_type,
+                network_flavor=network_flavor,
             )
         except StringAPIError as exc:
             st.error(str(exc))
@@ -176,6 +190,7 @@ if run:
         "mapping": mapping,
         "network": network,
         "enrichment": enrichment,
+        "native_media": native_media,
         "centrality": centrality,
         "hubs": hubs,
         "unresolved": unresolved,
@@ -183,6 +198,7 @@ if run:
             "species": species_label,
             "taxon_id": species,
             "network_type": network_type,
+            "network_flavor": network_flavor,
             "required_score": score_label,
             "fdr_cutoff": fdr_cutoff,
             "hub_metric": hub_metric,
@@ -197,6 +213,10 @@ if analysis:
     mapping = analysis["mapping"]
     network = analysis["network"]
     enrichment = analysis["enrichment"]
+    native_media = analysis.get(
+        "native_media",
+        {"highres_png": None, "svg": None, "link": None, "errors": []},
+    )
     centrality = analysis["centrality"]
     hubs = analysis["hubs"]
     unresolved = analysis["unresolved"]
@@ -243,22 +263,92 @@ if analysis:
 
     with tab_net:
         st.subheader("Protein–protein interaction network")
+        st.caption(
+            "The STRING-native figure is shown first. The second view is generated locally "
+            "to highlight the hub genes calculated by this app."
+        )
+
+        native_tab, local_tab = st.tabs(
+            ["STRING native figure", "Hub-highlighted figure"]
+        )
+
+        with native_tab:
+            if native_media.get("highres_png"):
+                st.image(
+                    native_media["highres_png"],
+                    caption=(
+                        "Official STRING-rendered network · "
+                        f"{settings.get('network_flavor', 'evidence')} style"
+                    ),
+                    use_container_width=True,
+                )
+
+                d1, d2, d3 = st.columns(3)
+                d1.download_button(
+                    "Download STRING high-res PNG",
+                    native_media["highres_png"],
+                    "string_native_network_highres.png",
+                    "image/png",
+                    key="string_native_png",
+                    use_container_width=True,
+                )
+                if native_media.get("svg"):
+                    d2.download_button(
+                        "Download STRING SVG",
+                        native_media["svg"],
+                        "string_native_network.svg",
+                        "image/svg+xml",
+                        key="string_native_svg",
+                        use_container_width=True,
+                    )
+                else:
+                    d2.caption("SVG unavailable for this run.")
+
+                if native_media.get("link"):
+                    d3.link_button(
+                        "Open this network in STRING",
+                        native_media["link"],
+                        use_container_width=True,
+                    )
+                else:
+                    d3.caption("STRING webpage link unavailable.")
+            else:
+                st.warning(
+                    "STRING did not return the native high-resolution image for this run. "
+                    "The network data and local figure are still available."
+                )
+
+            if native_media.get("errors"):
+                with st.expander("STRING media retrieval notes"):
+                    for error in native_media["errors"]:
+                        st.write(f"• {error}")
+
+        with local_tab:
+            if network.empty:
+                st.warning(
+                    "No interactions passed the selected STRING score threshold, so a "
+                    "hub-highlighted local network cannot be constructed."
+                )
+            else:
+                fig_net = network_figure(
+                    graph,
+                    set(hubs["Gene"]) if not hubs.empty else set(),
+                )
+                st.pyplot(fig_net, use_container_width=True)
+                render_downloads("hub_highlighted_ppi_network", fig_net)
+                plt.close(fig_net)
+                st.caption(
+                    "Red nodes are the current top-ranked hub genes; blue nodes are other "
+                    "network proteins. This is an app-generated figure, not STRING's native rendering."
+                )
+
         if network.empty:
             st.warning(
-                "No interactions passed the selected STRING score threshold. "
-                "Try a lower threshold or check the submitted targets."
+                "No PPI edges passed the selected STRING score threshold. Try a lower "
+                "threshold or review the submitted targets."
             )
         else:
-            fig_net = network_figure(
-                graph,
-                set(hubs["Gene"]) if not hubs.empty else set(),
-            )
-            st.pyplot(fig_net, use_container_width=True)
-            render_downloads("string_ppi_network", fig_net)
-            plt.close(fig_net)
-            st.caption(
-                "Red nodes are the current top-ranked hub genes; blue nodes are other network proteins."
-            )
+            st.markdown("#### STRING interaction table")
             st.dataframe(network, use_container_width=True, hide_index=True)
             st.download_button(
                 "Download STRING edges TSV",
@@ -366,6 +456,13 @@ if analysis:
             "tables/enrichment_all.tsv": dataframe_tsv(enrichment),
         }
 
+        if native_media.get("highres_png"):
+            files["figures/string_native_network_highres.png"] = native_media["highres_png"]
+        if native_media.get("svg"):
+            files["figures/string_native_network.svg"] = native_media["svg"]
+        if native_media.get("link"):
+            files["string_native_network_link.txt"] = native_media["link"].encode("utf-8")
+
         if graph.number_of_nodes() > 0:
             fig = network_figure(
                 graph,
@@ -402,13 +499,15 @@ if analysis:
             "NETWORK PHARMACOLOGY / TOXICOLOGY ANALYSIS\n\n"
             f"Organism: {settings['species']} (NCBI taxon {settings['taxon_id']})\n"
             f"STRING network type: {settings['network_type']}\n"
+            f"STRING native figure style: {settings.get('network_flavor', 'evidence')}\n"
             f"Minimum STRING interaction score: {settings['required_score']}/1000\n"
             f"Enrichment significance threshold: FDR <= {settings['fdr_cutoff']}\n"
             f"Hub ranking metric: {settings['hub_metric']}\n"
             f"Top hub genes requested: {settings['top_n']}\n\n"
             "STRING identifiers were mapped using get_string_ids. The PPI edge list was obtained "
-            "from the STRING network API with no added neighbor nodes. Network centrality was "
-            "calculated locally with NetworkX. Confidence scores were used as edge strengths; "
+            "from the STRING network API with no added neighbor nodes. The official STRING-native "
+            "network was also retrieved as a high-resolution PNG and SVG when available. Network "
+            "centrality was calculated locally with NetworkX. Confidence scores were used as edge strengths; "
             "inverse confidence was used as distance for shortest-path-based metrics. Functional "
             "enrichment was obtained from the STRING enrichment API and filtered by false discovery "
             "rate (FDR).\n"
