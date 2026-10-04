@@ -117,9 +117,26 @@ def enrich(payload: EnrichmentRequest) -> dict:
             raise HTTPException(status_code=500, detail=detail)
 
         summary = json.loads((outdir / "summary.json").read_text())
+        table_files = {
+            "mapping_foreground": "mapping_foreground.csv",
+            "unmapped_foreground": "unmapped_foreground.csv",
+            "go_bp_raw": "go_bp_raw_significant.csv",
+            "go_bp_reduced": "go_bp_reduced.csv",
+            "go_cc_raw": "go_cc_raw_significant.csv",
+            "go_cc_reduced": "go_cc_reduced.csv",
+            "go_mf_raw": "go_mf_raw_significant.csv",
+            "go_mf_reduced": "go_mf_reduced.csv",
+            "reactome_raw": "reactome_raw_significant.csv",
+            "reactome_reduced": "reactome_reduced.csv",
+            "background_universe": "background_universe.csv",
+            "mapping_background": "mapping_background.csv",
+        }
         tables = {}
-        for path in outdir.glob("*.csv"):
+        for key, filename in table_files.items():
+            path = outdir / filename
+            if not path.exists():
+                continue
             with path.open(newline="") as fh:
-                tables[path.stem] = list(csv.DictReader(fh))
+                tables[key] = list(csv.DictReader(fh))
 
         return {"summary": summary, "tables": tables}
