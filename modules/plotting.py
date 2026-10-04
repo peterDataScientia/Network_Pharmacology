@@ -32,11 +32,11 @@ def network_figure(graph: nx.Graph, hubs: set[str] | None = None):
         ax.axis("off")
         return fig
 
-    pos = nx.spring_layout(graph, seed=42, weight="weight")
+    pos = nx.spring_layout(graph, seed=42, weight=None)
     degrees = dict(graph.degree())
     sizes = [90 + 30 * degrees[n] for n in graph.nodes]
     node_colors = ["#C43D3D" if n in hubs else "#4D7FB8" for n in graph.nodes]
-    widths = [0.35 + 1.5 * graph[u][v].get("weight", 0.0) for u, v in graph.edges]
+    widths = [0.55 + 1.6 * graph[u][v].get("string_confidence", 0.0) for u, v in graph.edges]
 
     nx.draw_networkx_edges(graph, pos, width=widths, alpha=0.35, edge_color="#7C8793", ax=ax)
     nx.draw_networkx_nodes(
@@ -72,6 +72,56 @@ def centrality_figure(hubs: pd.DataFrame, metric: str):
     fig.tight_layout()
     return fig
 
+
+
+def consensus_centrality_figure(
+    ranked: pd.DataFrame,
+    top_n: int,
+):
+    """Four-panel Top-N centrality plot with 4/4 consensus hubs highlighted."""
+    metrics = ["Degree", "Betweenness", "Closeness", "Eigenvector"]
+    fig, axes = plt.subplots(2, 2, figsize=(8.2, 6.2), dpi=150)
+    axes = axes.ravel()
+
+    if ranked.empty:
+        for ax in axes:
+            ax.axis("off")
+        axes[0].text(0.5, 0.5, "No connected PPI nodes.", ha="center", va="center")
+        fig.tight_layout()
+        return fig
+
+    consensus = set(
+        ranked.loc[ranked["4/4 consensus hub"], "Gene"].astype(str)
+        if "4/4 consensus hub" in ranked.columns
+        else []
+    )
+
+    for idx, (ax, metric) in enumerate(zip(axes, metrics)):
+        data = (
+            ranked.sort_values([metric, "Degree", "Gene"], ascending=[False, False, True])
+            .head(min(top_n, len(ranked)))
+            .sort_values(metric, ascending=True)
+        )
+        colors = ["#2E9B4D" if gene in consensus else "#D94A45" for gene in data["Gene"]]
+        ax.barh(data["Gene"], data[metric], color=colors)
+        ax.set_xlabel(metric, fontsize=9, fontweight="bold")
+        ax.set_ylabel("")
+        ax.set_title(f"({chr(65 + idx)}) {metric}", fontsize=10, fontweight="bold", loc="left")
+        ax.tick_params(axis="both", labelsize=8, width=1.2, length=4, direction="out", pad=3)
+        ax.spines["left"].set_linewidth(1.5)
+        ax.spines["bottom"].set_linewidth(1.5)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig.text(
+        0.5,
+        0.01,
+        f"Green = 4/4 consensus hub; red = not 4/4 consensus · Top {top_n} per metric",
+        ha="center",
+        fontsize=8,
+    )
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    return fig
 
 def enrichment_figure(data: pd.DataFrame, title: str, top_n: int = 15):
     fig, ax = plt.subplots(figsize=FIGSIZE, dpi=150)
