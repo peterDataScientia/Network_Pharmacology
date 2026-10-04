@@ -131,13 +131,20 @@ reduce_go <- function(obj, preselect_n = NULL) {
   df <- filter_sig(safe_df(obj))
   if (nrow(df) == 0) return(df)
 
-  if (!is.null(preselect_n) && nrow(df) > preselect_n) {
-    keep_ids <- head(df$ID, preselect_n)
-    subset_obj <- obj
-    subset_obj@result <- obj@result[obj@result$ID %in% keep_ids, , drop = FALSE]
-  } else {
-    subset_obj <- obj
+  # Match the reference notebook exactly: semantic reduction is performed
+  # only on the statistically significant GO terms. GO-BP is additionally
+  # restricted to the strongest 100 significant terms before simplify().
+  keep_ids <- df$ID
+  if (!is.null(preselect_n) && length(keep_ids) > preselect_n) {
+    keep_ids <- head(keep_ids, preselect_n)
   }
+
+  subset_obj <- obj
+  subset_obj@result <- obj@result[
+    obj@result$ID %in% keep_ids,
+    ,
+    drop = FALSE
+  ]
 
   reduced <- clusterProfiler::simplify(
     subset_obj,
