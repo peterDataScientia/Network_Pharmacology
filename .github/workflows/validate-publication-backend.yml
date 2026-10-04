@@ -1,5 +1,9 @@
 name: Validate publication backend
 
+concurrency:
+  group: publication-backend-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches:
