@@ -1,0 +1,75 @@
+name: Publication enrichment branch checks
+
+on:
+  push:
+    branches:
+      - feature/publication-enrichment
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  syntax-and-light-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python sources
+        run: |
+          python -m py_compile app.py modules/*.py publication_enrichment/validate_egcg.py
+
+      - name: Test background assistant and igraph compatibility
+        run: |
+          python - <<'PY'
+          import networkx as nx
+          import pandas as pd
+
+          from modules.hub_consensus_v2 import centrality_table, consensus_hub_analysis
+          from modules.publication_enrichment import background_recommendation
+
+          assert background_recommendation("Experimental omics")["mode"] == "custom"
+          assert background_recommendation("Target-prediction/database intersection")["mode"] == "all_annotated"
+          assert background_recommendation("Candidate/panel study")["mode"] == "custom"
+
+          g = nx.Graph()
+          g.add_edges_from([("A", "B"), ("B", "C"), ("B", "D")])
+          table = centrality_table(g)
+          assert abs(table["Eigenvector"].max() - 1.0) < 1e-12
+
+          synthetic = pd.DataFrame(
+              {
+                  "Gene": ["B", "A", "C"],
+                  "Degree": [5, 5, 1],
+                  "Betweenness": [1.0, 1.0, 0.0],
+                  "Closeness": [1.0, 1.0, 0.5],
+                  "Eigenvector": [1.0, 1.0, 0.1],
+                  "Degree rank": [1, 1, 3],
+                  "Betweenness rank": [1, 1, 3],
+                  "Closeness rank": [1, 1, 3],
+                  "Eigenvector rank": [1, 1, 3],
+              }
+          )
+          ranked, hubs, effective = consensus_hub_analysis(synthetic, top_n=1)
+          assert effective == 1
+          assert hubs["Gene"].tolist() == ["A"], hubs
+          print("Python light tests passed.")
+          PY
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Parse R backend
+        run: |
+          Rscript -e "parse(file='publication_enrichment/run_enrichment.R'); cat('R syntax OK\n')"
