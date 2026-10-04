@@ -19,6 +19,10 @@ from modules.publication_enrichment import (
     run_publication_enrichment,
 )
 from modules.publication_plots import mirrored_enrichment_figure
+from modules.reference_validation import (
+    EGCG_RISI_ENRICHMENT_DEFAULT_EXPECTED,
+    is_egcg_risi_reference,
+)
 
 
 SOURCE_HELP = {
@@ -107,6 +111,17 @@ def _mapped_symbols(mapping: pd.DataFrame) -> list[str]:
     return list(dict.fromkeys(v.strip() for v in values if v.strip()))
 
 
+def _submitted_symbols(settings: dict) -> list[str]:
+    values = settings.get("submitted_targets", []) or []
+    return list(
+        dict.fromkeys(
+            str(v).strip()
+            for v in values
+            if str(v).strip()
+        )
+    )
+
+
 def render_publication_enrichment(
     mapping: pd.DataFrame,
     settings: dict,
@@ -117,13 +132,23 @@ def render_publication_enrichment(
         "BH-adjusted P < 0.05, GO Wang reduction at 0.70 and Reactome Jaccard reduction at 0.70."
     )
 
-    foreground = _mapped_symbols(mapping)
+    # Publication enrichment must be independent of STRING alias/preferred-name
+    # changes. The validated manuscript workflow used the original submitted
+    # gene-symbol list and mapped SYMBOL -> ENTREZ directly with AnnotationDbi.
+    foreground = _submitted_symbols(settings)
+    foreground_source = "submitted target symbols"
+    if not foreground:
+        foreground = _mapped_symbols(mapping)
+        foreground_source = "STRING-mapped preferred gene symbols (fallback)"
+
     if len(foreground) < 2:
-        st.warning("At least two mapped gene symbols are required.")
+        st.warning("At least two target symbols are required.")
         return
 
     st.info(
-        f"This analysis uses {len(foreground)} STRING-mapped preferred gene symbols from the current target set."
+        f"This analysis uses {len(foreground)} {foreground_source}. "
+        "Publication enrichment maps these symbols directly to Entrez IDs with AnnotationDbi; "
+        "STRING preferred-name substitutions are not used when submitted targets are available."
     )
 
     taxon_id = int(settings["taxon_id"])
@@ -217,10 +242,17 @@ def render_publication_enrichment(
             "in the selected organism annotation package."
         )
     else:
-        st.warning(
-            "Package/default background is retained mainly for reproducing older analyses. "
-            "For a new study, prefer a scientifically justified explicit background when possible."
-        )
+        if is_egcg_risi_reference(foreground):
+            st.success(
+                "Manuscript reproduction mode: this is the validated EGCG/RISI background setting. "
+                "Expected reference counts are GO-BP 1432→49, GO-CC 23→17, "
+                "GO-MF 54→26 and Reactome 276→91."
+            )
+        else:
+            st.warning(
+                "Package/default background is retained mainly for reproducing older analyses. "
+                "For a new study, prefer a scientifically justified explicit background when possible."
+            )
 
     figure_top_n = st.slider(
         "Terms per category in publication figure",
@@ -262,6 +294,8 @@ def render_publication_enrichment(
                         "taxon_id": taxon_id,
                         "foreground": foreground,
                         "background_label": background_label,
+                        "background_mode": bg_mode,
+                        "custom_background": custom_background,
                         "source_type": source_type,
                     }
                     st.success("Publication enrichment completed.")
@@ -274,10 +308,13 @@ def render_publication_enrichment(
     if (
         signature.get("taxon_id") != taxon_id
         or signature.get("foreground") != foreground
+        or signature.get("background_mode") != bg_mode
+        or signature.get("custom_background", []) != custom_background
+        or signature.get("source_type") != source_type
     ):
         st.warning(
-            "The stored publication result belongs to a previous target set or organism. "
-            "Run Publication Enrichment again for the current analysis."
+            "The displayed Publication Enrichment settings differ from the stored result. "
+            "Run Publication Enrichment again before interpreting or exporting these results."
         )
         return
 
@@ -295,6 +332,31 @@ def render_publication_enrichment(
         f"Background: {summary.get('background_description', 'unknown')} · "
         f"Significance: {summary.get('significance', 'BH-adjusted P < 0.05')}"
     )
+
+    if is_egcg_risi_reference(foreground) and bg_mode == "default":
+        observed = summary.get("counts", {})
+        expected = EGCG_RISI_ENRICHMENT_DEFAULT_EXPECTED
+        mismatches = {
+            key: (observed.get(key), value)
+            for key, value in expected.items()
+            if observed.get(key) != value
+        }
+        if mismatches:
+            detail = "; ".join(
+                f"{key}: observed {got}, expected {want}"
+                for key, (got, want) in mismatches.items()
+            )
+            st.error(
+                "EGCG/RISI manuscript reproducibility check FAILED. "
+                "The validated package/default reference is "
+                "GO-BP 1432→49, GO-CC 23→17, GO-MF 54→26, Reactome 276→91. "
+                + detail
+            )
+        else:
+            st.success(
+                "EGCG/RISI manuscript reproducibility check PASSED: "
+                "GO-BP 1432→49 · GO-CC 23→17 · GO-MF 54→26 · Reactome 276→91."
+            )
 
     tab_qc, tab_raw, tab_reduced, tab_figure, tab_methods = st.tabs(
         [
