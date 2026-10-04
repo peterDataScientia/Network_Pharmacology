@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import networkx as nx
-import numpy as np
 import pandas as pd
+
+PRIMARY_METRICS = ["Degree", "Betweenness", "Closeness", "Eigenvector"]
 
 
 def build_graph(network: pd.DataFrame) -> nx.Graph:
+    """Build the connected PPI graph returned by STRING.
+
+    STRING confidence is retained as edge metadata for reporting/visualization,
+    but the primary hub analysis below is intentionally unweighted. The selected
+    STRING confidence threshold determines which edges enter the graph.
+    """
     graph = nx.Graph()
     if network.empty:
         return graph
@@ -15,107 +22,127 @@ def build_graph(network: pd.DataFrame) -> nx.Graph:
         b = str(row.get("preferredName_B", row.get("stringId_B", ""))).strip()
         if not a or not b:
             continue
+
         score = float(row.get("score", 0.0) or 0.0)
-        score = max(score, 1e-9)
-        graph.add_edge(a, b, weight=score, distance=1.0 / score)
+        graph.add_edge(a, b, string_confidence=score)
+
     return graph
 
 
-def pagerank_numpy(
-    graph: nx.Graph,
-    alpha: float = 0.85,
-    max_iter: int = 200,
-    tol: float = 1e-10,
-) -> dict:
-    """Weighted PageRank implemented with NumPy only.
-
-    NetworkX's PageRank implementation depends on SciPy. Streamlit Community
-    Cloud may not have SciPy installed, so this lightweight implementation keeps
-    the app deployable without adding that heavy dependency.
-    """
-    nodes = list(graph.nodes)
-    n = len(nodes)
-    if n == 0:
-        return {}
-
-    index = {node: i for i, node in enumerate(nodes)}
-    matrix = np.zeros((n, n), dtype=float)
-
-    for u, v, data in graph.edges(data=True):
-        weight = float(data.get("weight", 1.0) or 1.0)
-        i, j = index[u], index[v]
-        matrix[i, j] += weight
-        matrix[j, i] += weight
-
-    row_sums = matrix.sum(axis=1)
-    dangling = row_sums == 0
-
-    transition = np.zeros_like(matrix)
-    active = ~dangling
-    transition[active] = matrix[active] / row_sums[active, None]
-
-    rank = np.full(n, 1.0 / n)
-    teleport = np.full(n, (1.0 - alpha) / n)
-
-    for _ in range(max_iter):
-        dangling_mass = rank[dangling].sum() / n
-        new_rank = alpha * (rank @ transition + dangling_mass) + teleport
-
-        if np.abs(new_rank - rank).sum() < tol:
-            rank = new_rank
-            break
-        rank = new_rank
-
-    total = rank.sum()
-    if total > 0:
-        rank = rank / total
-
-    return {node: float(rank[index[node]]) for node in nodes}
-
-
 def centrality_table(graph: nx.Graph) -> pd.DataFrame:
+    """Calculate the four unweighted topology metrics used for consensus hubs."""
     if graph.number_of_nodes() == 0:
         return pd.DataFrame()
 
     degree = dict(graph.degree())
-    degree_cent = nx.degree_centrality(graph)
-    strength = dict(graph.degree(weight="weight"))
-    betweenness = nx.betweenness_centrality(graph, weight="distance", normalized=True)
-    closeness = nx.closeness_centrality(graph, distance="distance")
-    pagerank = pagerank_numpy(graph)
+    betweenness = nx.betweenness_centrality(graph, weight=None, normalized=True)
+    closeness = nx.closeness_centrality(graph)
 
     try:
-        eigenvector = nx.eigenvector_centrality(graph, max_iter=2000, weight="weight")
+        eigenvector = nx.eigenvector_centrality(
+            graph,
+            max_iter=5000,
+            tol=1e-10,
+            weight=None,
+        )
     except (nx.PowerIterationFailedConvergence, nx.NetworkXException):
-        eigenvector = {node: np.nan for node in graph.nodes}
+        eigenvector = {node: float("nan") for node in graph.nodes}
 
     df = pd.DataFrame(
         {
             "Gene": list(graph.nodes),
             "Degree": [degree[n] for n in graph.nodes],
-            "Degree centrality": [degree_cent[n] for n in graph.nodes],
-            "Weighted degree": [strength[n] for n in graph.nodes],
             "Betweenness": [betweenness[n] for n in graph.nodes],
             "Closeness": [closeness[n] for n in graph.nodes],
             "Eigenvector": [eigenvector[n] for n in graph.nodes],
-            "PageRank": [pagerank[n] for n in graph.nodes],
         }
     )
 
-    metrics = ["Degree", "Betweenness", "Closeness", "Eigenvector", "PageRank"]
-    ranks = []
-    for metric in metrics:
-        ranks.append(df[metric].rank(method="average", ascending=False, pct=True))
-    df["Composite score"] = 1.0 - pd.concat(ranks, axis=1).mean(axis=1)
-    return df.sort_values(["Composite score", "Degree"], ascending=[False, False]).reset_index(drop=True)
+    for metric in PRIMARY_METRICS:
+        df[f"{metric} rank"] = (
+            df[metric]
+            .rank(method="min", ascending=False, na_option="bottom")
+            .astype(int)
+        )
 
-
-def choose_hubs(centrality: pd.DataFrame, metric: str, top_n: int) -> pd.DataFrame:
-    if centrality.empty:
-        return centrality
-    metric = metric if metric in centrality.columns else "Degree"
     return (
-        centrality.sort_values([metric, "Degree"], ascending=[False, False])
-        .head(min(top_n, len(centrality)))
+        df.sort_values(
+            ["Degree", "Betweenness", "Closeness", "Eigenvector", "Gene"],
+            ascending=[False, False, False, False, True],
+        )
         .reset_index(drop=True)
     )
+
+
+def consensus_hub_analysis(
+    centrality: pd.DataFrame,
+    top_n: int = 10,
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Identify hubs by intersection of Top-N lists from four centralities.
+
+    The procedure mirrors the manuscript workflow:
+      Degree ∩ Betweenness ∩ Closeness ∩ Eigenvector.
+
+    Returns:
+      all_ranked: every connected gene with metric ranks and consensus membership
+      consensus_hubs: genes appearing in Top-N for all four metrics
+      effective_top_n: min(requested Top-N, connected node count)
+    """
+    if centrality.empty:
+        return pd.DataFrame(), pd.DataFrame(), 0
+
+    effective_top_n = min(int(top_n), len(centrality))
+    out = centrality.copy()
+
+    membership_columns = []
+    for metric in PRIMARY_METRICS:
+        ordered = (
+            out.sort_values(
+                [metric, "Degree", "Gene"],
+                ascending=[False, False, True],
+                na_position="last",
+            )
+            .head(effective_top_n)["Gene"]
+            .tolist()
+        )
+        selected = set(ordered)
+        col = f"Top {effective_top_n} {metric}"
+        out[col] = out["Gene"].isin(selected)
+        membership_columns.append(col)
+
+    out["Consensus count"] = out[membership_columns].sum(axis=1).astype(int)
+    out["Consensus"] = out["Consensus count"].astype(str) + "/4"
+    out["4/4 consensus hub"] = out["Consensus count"] == 4
+
+    rank_cols = [f"{m} rank" for m in PRIMARY_METRICS]
+    out["Mean rank"] = out[rank_cols].mean(axis=1)
+
+    out = (
+        out.sort_values(
+            ["Consensus count", "Mean rank", "Degree rank", "Gene"],
+            ascending=[False, True, True, True],
+        )
+        .reset_index(drop=True)
+    )
+
+    hubs = out[out["4/4 consensus hub"]].copy().reset_index(drop=True)
+    return out, hubs, effective_top_n
+
+
+def connected_and_isolated_targets(
+    mapping: pd.DataFrame,
+    graph: nx.Graph,
+) -> tuple[list[str], list[str]]:
+    """Return mapped target names split into connected and isolated-at-threshold."""
+    if mapping.empty:
+        return [], []
+
+    if "preferredName" in mapping.columns:
+        mapped = mapping["preferredName"].dropna().astype(str).drop_duplicates().tolist()
+    else:
+        mapped = mapping["stringId"].dropna().astype(str).drop_duplicates().tolist()
+
+    connected_set = set(graph.nodes)
+    connected = [gene for gene in mapped if gene in connected_set]
+    isolated = [gene for gene in mapped if gene not in connected_set]
+    return connected, isolated
