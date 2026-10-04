@@ -21,7 +21,7 @@ jobs:
       - name: Build exact Bioconductor backend
         run: docker build -f backend/Dockerfile -t publication-backend:test .
 
-      - name: Start backend with 1 GB memory limit
+      - name: Start backend with 2 GB memory limit
         run: |
           docker run -d \
             --name publication-backend \
