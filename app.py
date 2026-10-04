@@ -7,23 +7,19 @@ import pandas as pd
 import streamlit as st
 
 from modules.io_utils import build_results_zip, dataframe_tsv, normalize_targets, targets_from_upload
-from modules.network_analysis import (
+from modules.hub_consensus_v2 import (
     build_graph,
     centrality_table,
     consensus_hub_analysis,
     connected_and_isolated_targets,
 )
-from modules.plotting import (
-    consensus_centrality_figure,
-    enrichment_figure,
-    figure_bytes,
-    network_figure,
-)
+from modules.hub_plots_v2 import consensus_centrality_figure, network_figure
+from modules.plotting import enrichment_figure, figure_bytes
 from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 2
+APP_STATE_VERSION = 3
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state["_app_state_version"] = APP_STATE_VERSION
