@@ -39,6 +39,12 @@ def centrality_table(graph: nx.Graph) -> pd.DataFrame:
             tol=1e-10,
             weight=None,
         )
+        # Match igraph::evcent(..., scale = TRUE): largest value is 1.
+        finite_values = [v for v in eigenvector.values() if pd.notna(v)]
+        if finite_values:
+            max_value = max(finite_values)
+            if max_value != 0:
+                eigenvector = {node: value / max_value for node, value in eigenvector.items()}
     except (nx.PowerIterationFailedConvergence, nx.NetworkXException):
         eigenvector = {node: float("nan") for node in graph.nodes}
 
@@ -82,8 +88,8 @@ def consensus_hub_analysis(
     for metric in PRIMARY_METRICS:
         selected = set(
             out.sort_values(
-                [metric, "Degree", "Gene"],
-                ascending=[False, False, True],
+                [metric, "Gene"],
+                ascending=[False, True],
                 na_position="last",
             )
             .head(effective_top_n)["Gene"]
