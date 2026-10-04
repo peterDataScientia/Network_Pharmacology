@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import pandas as pd
+
+FIGSIZE = (6.66, 3.90)
+
+
+def network_figure(graph: nx.Graph, hubs: set[str] | None = None):
+    hubs = hubs or set()
+    fig, ax = plt.subplots(figsize=FIGSIZE, dpi=150)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if graph.number_of_nodes() == 0:
+        ax.text(0.5, 0.5, "No interactions passed the selected threshold.", ha="center", va="center")
+        ax.axis("off")
+        return fig
+
+    pos = nx.spring_layout(graph, seed=42, weight=None)
+    degree = dict(graph.degree())
+    sizes = [90 + 30 * degree[n] for n in graph.nodes]
+    node_colors = ["#2E9B4D" if n in hubs else "#4D7FB8" for n in graph.nodes]
+    widths = [
+        0.55 + 1.6 * float(graph[u][v].get("string_confidence", 0.0) or 0.0)
+        for u, v in graph.edges
+    ]
+
+    nx.draw_networkx_edges(
+        graph, pos, width=widths, alpha=0.35, edge_color="#7C8793", ax=ax
+    )
+    nx.draw_networkx_nodes(
+        graph,
+        pos,
+        node_size=sizes,
+        node_color=node_colors,
+        edgecolors="white",
+        linewidths=0.7,
+        alpha=0.95,
+        ax=ax,
+    )
+    label_size = 7 if graph.number_of_nodes() <= 40 else 5
+    nx.draw_networkx_labels(
+        graph, pos, font_size=label_size, font_weight="bold", ax=ax
+    )
+    ax.set_title("STRING PPI with 4/4 consensus hubs", fontsize=11, fontweight="bold")
+    ax.axis("off")
+    fig.tight_layout()
+    return fig
+
+
+def consensus_centrality_figure(ranked: pd.DataFrame, top_n: int):
+    metrics = ["Degree", "Betweenness", "Closeness", "Eigenvector"]
+    fig, axes = plt.subplots(2, 2, figsize=(8.2, 6.2), dpi=150)
+    axes = axes.ravel()
+
+    if ranked.empty:
+        for ax in axes:
+            ax.axis("off")
+        axes[0].text(0.5, 0.5, "No connected PPI nodes.", ha="center", va="center")
+        fig.tight_layout()
+        return fig
+
+    consensus = set(
+        ranked.loc[ranked["4/4 consensus hub"], "Gene"].astype(str)
+        if "4/4 consensus hub" in ranked.columns
+        else []
+    )
+
+    for idx, (ax, metric) in enumerate(zip(axes, metrics)):
+        data = (
+            ranked.sort_values(
+                [metric, "Degree", "Gene"],
+                ascending=[False, False, True],
+            )
+            .head(min(top_n, len(ranked)))
+            .sort_values(metric, ascending=True)
+        )
+        colors = ["#2E9B4D" if gene in consensus else "#D94A45" for gene in data["Gene"]]
+        ax.barh(data["Gene"], data[metric], color=colors)
+        ax.set_xlabel(metric, fontsize=9, fontweight="bold")
+        ax.set_ylabel("")
+        ax.set_title(f"({chr(65 + idx)}) {metric}", fontsize=10, fontweight="bold", loc="left")
+        ax.tick_params(
+            axis="both",
+            labelsize=8,
+            width=1.2,
+            length=4,
+            direction="out",
+            pad=3,
+        )
+        ax.spines["left"].set_linewidth(1.5)
+        ax.spines["bottom"].set_linewidth(1.5)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig.text(
+        0.5,
+        0.01,
+        f"Green = 4/4 consensus hub; red = not 4/4 consensus · Top {top_n} per metric",
+        ha="center",
+        fontsize=8,
+    )
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    return fig
