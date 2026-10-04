@@ -1,6 +1,11 @@
 from pathlib import Path
+import sys
 
 import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from modules.hub_consensus_v2 import (
     PRIMARY_METRICS,
@@ -13,7 +18,6 @@ from modules.reference_validation import (
     EGCG_RISI_TOP10_EXPECTED,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
 network = pd.read_csv(
     ROOT / "validation" / "egcg_risi_string_v12_network.tsv",
     sep="\t",
