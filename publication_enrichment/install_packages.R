@@ -24,7 +24,7 @@ BiocManager::install(
   required_bioc,
   ask = FALSE,
   update = FALSE,
-  dependencies = TRUE
+  dependencies = c("Depends", "Imports", "LinkingTo")
 )
 
 required_all <- c(required_bioc, "jsonlite")
