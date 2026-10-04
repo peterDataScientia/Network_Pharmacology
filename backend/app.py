@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import secrets
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 APP_ROOT = Path("/app")
@@ -29,6 +31,12 @@ app = FastAPI(
     title="Network Pharmacology Publication Enrichment API",
     version="1.0.0",
 )
+
+API_KEY = os.environ.get("PUBLICATION_API_KEY", "").strip()
+
+def _authorize(x_api_key: str | None) -> None:
+    if API_KEY and not (x_api_key and secrets.compare_digest(x_api_key, API_KEY)):
+        raise HTTPException(status_code=401, detail="Invalid API key.")
 
 def _r_version_report() -> dict:
     expr = r'''
@@ -63,7 +71,11 @@ def health() -> dict:
     return {"status": "ok", "versions": versions}
 
 @app.post("/enrich")
-def enrich(payload: EnrichmentRequest) -> dict:
+def enrich(
+    payload: EnrichmentRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict:
+    _authorize(x_api_key)
     organism = ORGANISM_CODE.get(payload.taxon_id)
     if organism is None:
         raise HTTPException(status_code=400, detail="Supported taxon IDs: 9606, 10090, 10116")
