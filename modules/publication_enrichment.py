@@ -94,6 +94,7 @@ def backend_status() -> dict:
         "org.Hs.eg.db",
         "ReactomePA",
         "AnnotationDbi",
+        "GOSemSim",
         "jsonlite",
     ]
     expr = (
