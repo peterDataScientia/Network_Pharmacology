@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,9 +65,30 @@ def rscript_available() -> bool:
     return shutil.which("Rscript") is not None
 
 
+def publication_backend_url() -> str | None:
+    value = os.environ.get("PUBLICATION_BACKEND_URL", "").strip()
+    return value.rstrip("/") if value else None
+
+
+def _remote_health(base_url: str) -> tuple[bool, list[str]]:
+    try:
+        with urllib.request.urlopen(base_url + "/health", timeout=45) as response:
+            payload = json.load(response)
+    except Exception as exc:
+        return False, [f"backend unavailable: {exc}"]
+    if payload.get("status") != "ok":
+        return False, ["backend health check failed"]
+    return True, []
+
+
 def publication_environment_status(taxon_id: int) -> tuple[bool, list[str]]:
     if taxon_id not in ORGANISM_CODE:
         return False, ["unsupported organism"]
+
+    backend = publication_backend_url()
+    if backend:
+        return _remote_health(backend)
+
     if not rscript_available():
         return False, ["Rscript"]
 
@@ -154,6 +177,59 @@ def ensure_publication_environment(taxon_id: int) -> None:
         )
 
 
+def _run_remote_publication_enrichment(
+    base_url: str,
+    targets: list[str],
+    taxon_id: int,
+    background_mode: str,
+    custom_background: list[str] | None,
+) -> PublicationEnrichmentResult:
+    payload = json.dumps(
+        {
+            "targets": targets,
+            "taxon_id": taxon_id,
+            "background_mode": background_mode,
+            "custom_background": custom_background,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + "/enrich",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=660) as response:
+            data = json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("detail", str(exc))
+        except Exception:
+            detail = str(exc)
+        raise PublicationEnrichmentError(
+            "Publication enrichment backend failed: " + str(detail)
+        ) from None
+    except Exception as exc:
+        raise PublicationEnrichmentError(
+            "Could not reach the publication enrichment backend: " + str(exc)
+        ) from None
+
+    summary = data.get("summary")
+    raw_tables = data.get("tables", {})
+    if not isinstance(summary, dict):
+        raise PublicationEnrichmentError("Backend response did not contain a valid summary.")
+
+    tables: dict[str, pd.DataFrame] = {}
+    for key, records in raw_tables.items():
+        tables[key] = pd.DataFrame(records or [])
+
+    return PublicationEnrichmentResult(
+        outdir=Path("."),
+        summary=summary,
+        tables=tables,
+    )
+
+
 def _write_lines(path: Path, values: list[str]) -> None:
     path.write_text("\n".join(str(v).strip() for v in values if str(v).strip()) + "\n")
 
@@ -198,6 +274,16 @@ def run_publication_enrichment(
             raise PublicationEnrichmentError(
                 "Custom background mode requires a non-empty background gene list."
             )
+
+    backend = publication_backend_url()
+    if backend:
+        return _run_remote_publication_enrichment(
+            backend,
+            targets,
+            taxon_id,
+            background_mode,
+            custom_background,
+        )
 
     if auto_install:
         ensure_publication_environment(taxon_id)
