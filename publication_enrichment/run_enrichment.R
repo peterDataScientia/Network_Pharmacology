@@ -39,6 +39,7 @@ required_packages <- c(
   "org.Hs.eg.db",
   "ReactomePA",
   "AnnotationDbi",
+  "GOSemSim",
   "jsonlite"
 )
 missing_packages <- required_packages[
