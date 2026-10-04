@@ -13,6 +13,7 @@ from modules.plotting import figure_bytes
 from modules.publication_enrichment import (
     PublicationEnrichmentError,
     PublicationEnrichmentResult,
+    publication_backend_url,
     publication_environment_status,
     rscript_available,
     run_publication_enrichment,
@@ -126,29 +127,34 @@ def render_publication_enrichment(
     )
 
     taxon_id = int(settings["taxon_id"])
-    if not rscript_available():
+    backend = publication_backend_url()
+
+    if not backend and not rscript_available():
         st.warning(
-            "Rscript is not available on this host, so Publication Enrichment cannot run here. "
+            "Publication Enrichment backend is not configured and Rscript is not available locally. "
             "Quick STRING enrichment remains fully available."
         )
         return
 
     ready, missing = publication_environment_status(taxon_id)
     if ready:
-        st.success("R/Bioconductor publication environment is ready.")
+        if backend:
+            st.success("Validated publication-enrichment backend is online and ready.")
+        else:
+            st.success("Local R/Bioconductor publication environment is ready.")
     else:
-        st.error(
-            "Publication Enrichment is not ready on this Streamlit server. "
-            "Automatic Bioconductor installation from the analysis button has been disabled "
-            "because the free server exceeded the 20-minute installation limit. "
-            "Quick STRING enrichment remains available."
-        )
-        if missing and missing != ["Rscript"]:
-            st.caption("Missing R components: " + ", ".join(missing))
-        st.caption(
-            "The validated R workflow itself is unchanged. This live mode now requires a "
-            "prebuilt R/Bioconductor environment instead of compiling packages during a user session."
-        )
+        if backend:
+            st.error(
+                "The configured publication-enrichment backend is currently unavailable. "
+                "Quick STRING enrichment remains available."
+            )
+        else:
+            st.error(
+                "Publication Enrichment is not ready on this Streamlit server. "
+                "Automatic Bioconductor installation from the analysis button is disabled."
+            )
+        if missing:
+            st.caption("Status: " + ", ".join(missing))
         return
 
     source_type = st.selectbox(
