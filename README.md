@@ -72,3 +72,62 @@ No API key is required for STRING. The app sends submitted identifiers to the pu
 ## Planned extensions
 
 Potential later modules include PPI-enrichment statistics, R/Bioconductor enrichment with redundancy reduction, optional transcriptomic validation, additional topology algorithms, module detection and richer provenance/report generation.
+
+
+## Development: Publication Enrichment
+
+The branch `dev-publication-enrichment` contains an isolated publication-oriented enrichment prototype. It does **not** replace the production STRING enrichment until validation passes.
+
+Architecture:
+
+```text
+Streamlit/Python
+      ↓
+temporary foreground/background files
+      ↓
+Rscript r/enrichment_publication.R
+      ↓
+AnnotationDbi + organism OrgDb
+clusterProfiler::enrichGO
+ReactomePA::enrichPathway
+      ↓
+BH-adjusted P < 0.05
+      ↓
+raw significant tables
+      +
+GO Wang semantic reduction (0.70)
+      +
+Reactome Jaccard reduction (0.70)
+      ↓
+CSV + JSON + mirrored publication figure
+```
+
+The development UI is `publication_enrichment_dev.py`.
+
+### Background assistant
+
+The prototype asks how the foreground was generated and supports three explicit enrichment universes:
+
+- **Custom study background** — preferred when an experimental/panel-specific universe is known.
+- **All annotated genes for organism** — explicit OrgDb Entrez universe; useful as a transparent general reference for database/prediction target lists.
+- **Package/default background** — retained for reproduction of older analyses, not presented as a universal best choice.
+
+### Reproducibility
+
+The R engine records R, clusterProfiler, ReactomePA, AnnotationDbi, GOSemSim and organism annotation-package versions in `summary.json`.
+
+Install the R environment locally with:
+
+```bash
+Rscript scripts/install_publication_enrichment.R
+```
+
+Run the EGCG–RISI validation with:
+
+```bash
+python validation/run_egcg_validation.py
+```
+
+The validation intentionally runs both the older default-background design and the newer explicit all-annotated-human background design as separate analyses.
+
+A GitHub Actions workflow, `.github/workflows/validate-publication-enrichment.yml`, performs Python syntax checks, installs the Bioconductor environment and runs the EGCG validation. Publication enrichment should not be merged into `main` until this validation is reviewed.
