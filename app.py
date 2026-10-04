@@ -640,6 +640,10 @@ if analysis:
                     if str(x).strip()
                 )
             )
+            and publication_signature.get("background_label")
+            == st.session_state.get("publication_background_mode")
+            and publication_signature.get("source_type")
+            == st.session_state.get("publication_source_type")
         )
         if publication_matches_current:
             publication_top_n = int(st.session_state.get("publication_figure_top_n", 10))
