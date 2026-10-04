@@ -362,7 +362,7 @@ if analysis:
                 render_downloads("consensus_hub_highlighted_ppi_network", fig_net)
                 plt.close(fig_net)
                 st.caption(
-                    "Red nodes are 4/4 consensus hubs (Top-N in Degree, Betweenness, "
+                    "Green nodes are 4/4 consensus hubs (Top-N in Degree, Betweenness, "
                     "Closeness and Eigenvector); blue nodes are other connected proteins. "
                     "This is an app-generated figure, not STRING's native rendering."
                 )
