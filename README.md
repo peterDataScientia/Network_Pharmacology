@@ -131,3 +131,36 @@ python validation/run_egcg_validation.py
 The validation intentionally runs both the older default-background design and the newer explicit all-annotated-human background design as separate analyses.
 
 A GitHub Actions workflow, `.github/workflows/validate-publication-enrichment.yml`, performs Python syntax checks, installs the Bioconductor environment and runs the EGCG validation. The EGCG reference workflow reproduced all eight raw/reduced term counts exactly before production integration.
+
+
+## Publication Enrichment backend deployment
+
+The publication-grade GO/Reactome workflow is too memory-intensive for the Streamlit Community Cloud process and for 512 MiB backend instances. The validated production architecture therefore runs the exact R/Bioconductor engine as a separate Modal web function.
+
+The Modal definition is `backend/modal_app.py`. It builds from `backend/Dockerfile`, preserving the validated scientific environment:
+
+- R 4.6.1 / Bioconductor 3.23
+- clusterProfiler 4.20.0
+- ReactomePA 1.56.0
+- AnnotationDbi 1.74.0
+- org.Hs.eg.db 3.23.1
+
+The Modal function requests 2 CPU cores and 4096 MiB RAM, scales to zero when idle, permits at most two concurrent containers, and uses the existing FastAPI `/health` and `/enrich` routes.
+
+The backend requires a Modal Secret named `network-pharmacology-publication-api` containing `PUBLICATION_API_KEY`. Streamlit should be configured with:
+
+```text
+PUBLICATION_BACKEND_URL=https://<modal-web-url>
+PUBLICATION_BACKEND_KEY=<same API key>
+```
+
+The GitHub workflow `.github/workflows/validate-publication-backend.yml` first runs the exact 32-gene EGCG parity gate under a 4 GiB memory limit. A deployment is permitted only after the historical reference counts match exactly:
+
+```text
+GO-BP      1432 -> 49
+GO-CC        23 -> 17
+GO-MF        54 -> 26
+Reactome    276 -> 91
+```
+
+The workflow's deployment job is manual (`workflow_dispatch`) and requires GitHub environment secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
