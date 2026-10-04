@@ -15,11 +15,19 @@ from modules.hub_consensus_v2 import (
 )
 from modules.hub_plots_v2 import consensus_centrality_figure, network_figure
 from modules.plotting import enrichment_figure, figure_bytes
+from modules.publication_enrichment import (
+    BACKGROUND_MODES,
+    SOURCE_TYPES,
+    PublicationEnrichmentError,
+    backend_status,
+    background_recommendation,
+    run_publication_enrichment,
+)
 from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 3
+APP_STATE_VERSION = 4
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state["_app_state_version"] = APP_STATE_VERSION
@@ -47,6 +55,11 @@ def enrichment_subset(df: pd.DataFrame, category: str, fdr_cutoff: float) -> pd.
         out = out[out["fdr"] <= fdr_cutoff]
         out = out.sort_values("fdr")
     return out.reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def publication_backend_status_cached():
+    return backend_status()
 
 
 def render_downloads(prefix: str, fig):
@@ -202,6 +215,7 @@ if run:
     mapped_queries = set(mapping.get("queryItem", pd.Series(dtype=str)).astype(str).str.upper())
     unresolved = [g for g in targets if g.upper() not in mapped_queries]
 
+    st.session_state.pop("publication_enrichment_result", None)
     st.session_state["analysis"] = {
         "mapping": mapping,
         "network": network,
@@ -473,61 +487,320 @@ if analysis:
 
     with tab_enrich:
         st.subheader("Functional enrichment")
-        if len(mapping) < 2:
-            st.warning(
-                "STRING enrichment is not interpreted for a single mapped target. "
-                "Submit at least two targets."
+        quick_enrich_tab, publication_enrich_tab = st.tabs(
+            ["Quick enrichment · STRING", "Publication enrichment · R/Bioconductor"]
+        )
+
+        with quick_enrich_tab:
+            st.caption(
+                "Fast enrichment returned directly by STRING. Useful for exploration; "
+                "the publication workflow below exposes background selection and redundancy reduction."
             )
-        elif enrichment.empty:
-            st.warning("No enrichment results were returned.")
-        else:
-            for category, label in CATEGORY_LABELS.items():
-                subset = enrichment_subset(
-                    enrichment,
-                    category,
-                    settings["fdr_cutoff"],
+            if len(mapping) < 2:
+                st.warning(
+                    "STRING enrichment is not interpreted for a single mapped target. "
+                    "Submit at least two targets."
                 )
-                with st.expander(
-                    f"{label} — {len(subset)} significant terms",
-                    expanded=category in {"Process", "KEGG", "RCTM"},
-                ):
-                    if subset.empty:
-                        st.caption(f"No terms at FDR ≤ {settings['fdr_cutoff']}.")
-                        continue
-                    cols = [
-                        c
-                        for c in [
-                            "term",
-                            "description",
-                            "number_of_genes",
-                            "number_of_genes_in_background",
-                            "strength",
-                            "signal",
-                            "fdr",
-                            "preferredNames",
+            elif enrichment.empty:
+                st.warning("No enrichment results were returned.")
+            else:
+                for category, label in CATEGORY_LABELS.items():
+                    subset = enrichment_subset(
+                        enrichment,
+                        category,
+                        settings["fdr_cutoff"],
+                    )
+                    with st.expander(
+                        f"{label} — {len(subset)} significant terms",
+                        expanded=category in {"Process", "KEGG", "RCTM"},
+                    ):
+                        if subset.empty:
+                            st.caption(f"No terms at FDR ≤ {settings['fdr_cutoff']}.")
+                            continue
+                        cols = [
+                            c
+                            for c in [
+                                "term",
+                                "description",
+                                "number_of_genes",
+                                "number_of_genes_in_background",
+                                "strength",
+                                "signal",
+                                "fdr",
+                                "preferredNames",
+                            ]
+                            if c in subset.columns
                         ]
-                        if c in subset.columns
-                    ]
-                    st.dataframe(
-                        subset[cols] if cols else subset,
-                        use_container_width=True,
-                        hide_index=True,
+                        st.dataframe(
+                            subset[cols] if cols else subset,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        fig = enrichment_figure(
+                            subset,
+                            label,
+                            settings["enrichment_top_n"],
+                        )
+                        st.pyplot(fig, use_container_width=True)
+                        safe = category.lower()
+                        render_downloads(f"enrichment_{safe}", fig)
+                        plt.close(fig)
+                        st.download_button(
+                            f"Download {label} TSV",
+                            dataframe_tsv(subset),
+                            f"enrichment_{safe}.tsv",
+                            "text/tab-separated-values",
+                            key=f"tsv_{safe}",
+                        )
+
+        with publication_enrich_tab:
+            st.caption(
+                "Experimental development workflow: clusterProfiler + ReactomePA, explicit "
+                "background provenance, BH correction, GO Wang reduction and Reactome Jaccard reduction."
+            )
+
+            if settings["taxon_id"] != 9606:
+                st.info(
+                    "Publication enrichment is currently validated for Homo sapiens only. "
+                    "Quick STRING enrichment remains available for the selected organism."
+                )
+            else:
+                source_type = st.selectbox(
+                    "Where did this target list come from?",
+                    SOURCE_TYPES,
+                    key="publication_source_type",
+                )
+                recommendation = background_recommendation(source_type)
+                st.info(
+                    f"Recommended: **{recommendation['title']}**\n\n"
+                    + recommendation["reason"]
+                )
+
+                mode_keys = list(BACKGROUND_MODES)
+                recommended_index = mode_keys.index(recommendation["mode"])
+                background_mode = st.selectbox(
+                    "Enrichment background",
+                    mode_keys,
+                    index=recommended_index,
+                    format_func=lambda key: BACKGROUND_MODES[key],
+                    key="publication_background_mode",
+                )
+
+                custom_background = []
+                if background_mode == "custom":
+                    bg_text = st.text_area(
+                        "Paste custom background gene symbols",
+                        height=150,
+                        placeholder="One eligible/background gene symbol per line",
+                        key="publication_background_text",
                     )
-                    fig = enrichment_figure(
-                        subset,
-                        label,
-                        settings["enrichment_top_n"],
+                    bg_upload = st.file_uploader(
+                        "Or upload custom background",
+                        type=["txt", "csv", "tsv"],
+                        key="publication_background_upload",
                     )
-                    st.pyplot(fig, use_container_width=True)
-                    safe = category.lower()
-                    render_downloads(f"enrichment_{safe}", fig)
-                    plt.close(fig)
+                    custom_background = normalize_targets(bg_text)
+                    for gene in targets_from_upload(bg_upload):
+                        if gene.upper() not in {x.upper() for x in custom_background}:
+                            custom_background.append(gene)
+
+                if background_mode == "package_default":
+                    st.warning(
+                        "Package/default background is retained mainly for legacy reproduction. "
+                        "Do not mix these results with explicit-background analyses."
+                    )
+
+                with st.expander("Advanced publication-enrichment settings"):
+                    pub_fdr = st.select_slider(
+                        "BH-adjusted P-value cutoff",
+                        options=[0.001, 0.01, 0.05, 0.10],
+                        value=0.05,
+                        key="publication_fdr",
+                    )
+                    go_cutoff = st.slider(
+                        "GO Wang similarity cutoff",
+                        min_value=0.50,
+                        max_value=0.90,
+                        value=0.70,
+                        step=0.05,
+                        key="publication_go_cutoff",
+                    )
+                    reactome_cutoff = st.slider(
+                        "Reactome Jaccard similarity cutoff",
+                        min_value=0.50,
+                        max_value=0.90,
+                        value=0.70,
+                        step=0.05,
+                        key="publication_reactome_cutoff",
+                    )
+                    legacy_profile = st.checkbox(
+                        "Reproduce supplied legacy notebook p/q cutoff behavior",
+                        value=False,
+                        key="publication_legacy_profile",
+                        help=(
+                            "For regression/reproduction only. Normal publication mode sets "
+                            "enrichment p/q cutoffs to 1 and applies the final decision explicitly "
+                            "using BH-adjusted P."
+                        ),
+                    )
+
+                backend = publication_backend_status_cached()
+                if backend["available"]:
+                    st.success(backend["message"])
+                else:
+                    st.warning(
+                        backend["message"]
+                        + " The Quick STRING workflow remains fully available."
+                    )
+
+                mapped_symbols = (
+                    mapping["preferredName"].dropna().astype(str).drop_duplicates().tolist()
+                    if "preferredName" in mapping.columns
+                    else settings["submitted_targets"]
+                )
+
+                run_publication = st.button(
+                    "Run publication enrichment",
+                    type="primary",
+                    disabled=not backend["available"],
+                    key="run_publication_enrichment",
+                    use_container_width=True,
+                )
+
+                if run_publication:
+                    try:
+                        with st.spinner(
+                            "Running clusterProfiler / ReactomePA and redundancy reduction…"
+                        ):
+                            pub_result = run_publication_enrichment(
+                                mapped_symbols,
+                                background_mode=background_mode,
+                                custom_background=custom_background,
+                                fdr_cutoff=pub_fdr,
+                                go_similarity_cutoff=go_cutoff,
+                                reactome_similarity_cutoff=reactome_cutoff,
+                                analysis_profile=(
+                                    "legacy_notebook" if legacy_profile else "publication"
+                                ),
+                            )
+                        st.session_state["publication_enrichment_result"] = pub_result
+                    except PublicationEnrichmentError as exc:
+                        st.error(f"Publication enrichment failed: {exc}")
+
+                pub_result = st.session_state.get("publication_enrichment_result")
+                if pub_result:
+                    pub_summary = pub_result["summary"]
+                    pub_tables = pub_result["tables"]
+
+                    st.markdown("#### Publication-enrichment QC")
+                    q1, q2, q3, q4 = st.columns(4)
+                    q1.metric(
+                        "Foreground symbols",
+                        pub_summary.get("foreground_symbols", 0),
+                    )
+                    q2.metric(
+                        "Mapped Entrez IDs",
+                        pub_summary.get("mapped_entrez_ids", 0),
+                    )
+                    q3.metric(
+                        "GO-BP significant",
+                        pub_summary.get("significant_counts", {}).get("go_bp", 0),
+                    )
+                    q4.metric(
+                        "Reactome significant",
+                        pub_summary.get("significant_counts", {}).get("reactome", 0),
+                    )
+
+                    st.write(
+                        "**Background:** "
+                        + str(pub_summary.get("background_definition", ""))
+                    )
+                    st.write(
+                        "**Software:** "
+                        + "; ".join(
+                            f"{name} {version}"
+                            for name, version in pub_summary.get(
+                                "software_versions", {}
+                            ).items()
+                        )
+                    )
+
+                    reduced_tab, significant_tab, provenance_tab = st.tabs(
+                        ["Non-redundant results", "All significant results", "QC & provenance"]
+                    )
+
+                    with reduced_tab:
+                        reduced_sets = [
+                            ("GO-BP", "go_bp_nonredundant"),
+                            ("GO-CC", "go_cc_nonredundant"),
+                            ("GO-MF", "go_mf_nonredundant"),
+                            ("Reactome", "reactome_nonredundant"),
+                        ]
+                        for label, key in reduced_sets:
+                            table = pub_tables.get(key, pd.DataFrame())
+                            with st.expander(
+                                f"{label} — {len(table)} non-redundant terms",
+                                expanded=label in {"GO-BP", "Reactome"},
+                            ):
+                                if table.empty:
+                                    st.caption("No non-redundant significant terms.")
+                                else:
+                                    st.dataframe(
+                                        table,
+                                        use_container_width=True,
+                                        hide_index=True,
+                                    )
+
+                    with significant_tab:
+                        significant_sets = [
+                            ("GO-BP", "go_bp_significant"),
+                            ("GO-CC", "go_cc_significant"),
+                            ("GO-MF", "go_mf_significant"),
+                            ("Reactome", "reactome_significant"),
+                        ]
+                        for label, key in significant_sets:
+                            table = pub_tables.get(key, pd.DataFrame())
+                            with st.expander(
+                                f"{label} — {len(table)} significant terms"
+                            ):
+                                st.dataframe(
+                                    table,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+
+                    with provenance_tab:
+                        st.json(pub_summary)
+                        st.markdown("##### SYMBOL → Entrez mapping")
+                        st.dataframe(
+                            pub_tables.get("mapping", pd.DataFrame()),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        unmapped = pub_tables.get("unmapped", pd.DataFrame())
+                        if not unmapped.empty:
+                            st.markdown("##### Unmapped symbols")
+                            st.dataframe(
+                                unmapped,
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
+                    methods_text = pub_result["artifacts"].get(
+                        "METHODS.txt", b""
+                    ).decode("utf-8", errors="replace")
+                    pub_zip = build_results_zip(
+                        pub_result["artifacts"],
+                        methods_text,
+                    )
                     st.download_button(
-                        f"Download {label} TSV",
-                        dataframe_tsv(subset),
-                        f"enrichment_{safe}.tsv",
-                        "text/tab-separated-values",
-                        key=f"tsv_{safe}",
+                        "Download publication enrichment package",
+                        pub_zip,
+                        "publication_enrichment_results.zip",
+                        "application/zip",
+                        type="primary",
+                        key="publication_enrichment_zip",
+                        use_container_width=True,
                     )
 
     with tab_export:
@@ -605,6 +878,11 @@ if analysis:
             "was obtained from the STRING enrichment API and filtered by false discovery "
             "rate (FDR).\n"
         )
+        pub_result_for_export = st.session_state.get("publication_enrichment_result")
+        if pub_result_for_export:
+            for name, payload in pub_result_for_export["artifacts"].items():
+                files[f"publication_enrichment/{name}"] = payload
+
         files["settings.json"] = json.dumps(settings, indent=2).encode("utf-8")
         zip_bytes = build_results_zip(files, methods)
         st.download_button(
