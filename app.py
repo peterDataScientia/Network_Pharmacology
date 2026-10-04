@@ -7,11 +7,26 @@ import pandas as pd
 import streamlit as st
 
 from modules.io_utils import build_results_zip, dataframe_tsv, normalize_targets, targets_from_upload
-from modules.network_analysis import build_graph, centrality_table, choose_hubs
-from modules.plotting import centrality_figure, enrichment_figure, figure_bytes, network_figure
+from modules.network_analysis import (
+    build_graph,
+    centrality_table,
+    consensus_hub_analysis,
+    connected_and_isolated_targets,
+)
+from modules.plotting import (
+    consensus_centrality_figure,
+    enrichment_figure,
+    figure_bytes,
+    network_figure,
+)
 from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
+
+APP_STATE_VERSION = 2
+if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
+    st.session_state.pop("analysis", None)
+    st.session_state["_app_state_version"] = APP_STATE_VERSION
 
 SPECIES = {
     "Homo sapiens (Human)": 9606,
@@ -74,7 +89,7 @@ with st.expander("What this app does", expanded=False):
         """
         1. Validates and maps submitted targets with STRING.
         2. Retrieves a STRING protein–protein interaction (PPI) network at your chosen confidence threshold.
-        3. Calculates network centrality and ranks candidate hub genes.
+        3. Calculates Degree, Betweenness, Closeness and Eigenvector centrality and identifies 4/4 consensus hubs.
         4. Retrieves GO Biological Process, Molecular Function, Cellular Component, KEGG and Reactome enrichment.
         5. Exports raw TSV tables, high-resolution PNG/PDF/SVG figures and a complete ZIP package.
         """
@@ -105,7 +120,7 @@ with st.sidebar:
     score_label = st.select_slider(
         "Minimum STRING interaction score",
         options=[150, 400, 700, 900],
-        value=700,
+        value=900,
         format_func=lambda x: {
             150: "Low (0.15)",
             400: "Medium (0.40)",
@@ -118,12 +133,16 @@ with st.sidebar:
         options=[0.001, 0.01, 0.05, 0.10],
         value=0.05,
     )
-    hub_metric = st.selectbox(
-        "Hub ranking metric",
-        ["Degree", "Betweenness", "Closeness", "Eigenvector", "PageRank", "Composite score"],
-        index=0,
+    top_n = st.slider(
+        "Top N per centrality metric",
+        5,
+        30,
+        10,
+        help=(
+            "The app takes the Top N genes from Degree, Betweenness, Closeness and "
+            "Eigenvector centrality. Genes present in all four lists are 4/4 consensus hubs."
+        ),
     )
-    top_n = st.slider("Number of hub genes", 5, 30, 10)
     enrichment_top_n = st.slider("Terms per enrichment plot", 5, 25, 15)
 
 left, right = st.columns([1.3, 1])
@@ -181,7 +200,8 @@ if run:
 
     graph = build_graph(network)
     centrality = centrality_table(graph)
-    hubs = choose_hubs(centrality, hub_metric, top_n)
+    consensus_ranked, hubs, effective_top_n = consensus_hub_analysis(centrality, top_n)
+    connected_targets, isolated_targets = connected_and_isolated_targets(mapping, graph)
 
     mapped_queries = set(mapping.get("queryItem", pd.Series(dtype=str)).astype(str).str.upper())
     unresolved = [g for g in targets if g.upper() not in mapped_queries]
@@ -192,7 +212,11 @@ if run:
         "enrichment": enrichment,
         "native_media": native_media,
         "centrality": centrality,
+        "consensus_ranked": consensus_ranked,
         "hubs": hubs,
+        "connected_targets": connected_targets,
+        "isolated_targets": isolated_targets,
+        "effective_top_n": effective_top_n,
         "unresolved": unresolved,
         "settings": {
             "species": species_label,
@@ -201,7 +225,6 @@ if run:
             "network_flavor": network_flavor,
             "required_score": score_label,
             "fdr_cutoff": fdr_cutoff,
-            "hub_metric": hub_metric,
             "top_n": top_n,
             "enrichment_top_n": enrichment_top_n,
             "submitted_targets": targets,
@@ -218,18 +241,23 @@ if analysis:
         {"highres_png": None, "svg": None, "link": None, "errors": []},
     )
     centrality = analysis["centrality"]
+    consensus_ranked = analysis["consensus_ranked"]
     hubs = analysis["hubs"]
+    connected_targets = analysis["connected_targets"]
+    isolated_targets = analysis["isolated_targets"]
+    effective_top_n = analysis["effective_top_n"]
     unresolved = analysis["unresolved"]
     settings = analysis["settings"]
     graph = build_graph(network)
 
     st.divider()
     st.header("Results")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Submitted", len(settings["submitted_targets"]))
     m2.metric("Mapped by STRING", len(mapping))
-    m3.metric("Network nodes", graph.number_of_nodes())
-    m4.metric("Network edges", graph.number_of_edges())
+    m3.metric("Connected", len(connected_targets))
+    m4.metric("PPI edges", graph.number_of_edges())
+    m5.metric("4/4 hubs", len(hubs))
 
     if unresolved:
         st.warning(
@@ -335,11 +363,12 @@ if analysis:
                     set(hubs["Gene"]) if not hubs.empty else set(),
                 )
                 st.pyplot(fig_net, use_container_width=True)
-                render_downloads("hub_highlighted_ppi_network", fig_net)
+                render_downloads("consensus_hub_highlighted_ppi_network", fig_net)
                 plt.close(fig_net)
                 st.caption(
-                    "Red nodes are the current top-ranked hub genes; blue nodes are other "
-                    "network proteins. This is an app-generated figure, not STRING's native rendering."
+                    "Red nodes are 4/4 consensus hubs (Top-N in Degree, Betweenness, "
+                    "Closeness and Eigenvector); blue nodes are other connected proteins. "
+                    "This is an app-generated figure, not STRING's native rendering."
                 )
 
         if network.empty:
@@ -358,33 +387,92 @@ if analysis:
             )
 
     with tab_hub:
-        st.subheader(f"Hub genes ranked by {settings['hub_metric']}")
+        st.subheader("Consensus hub-target analysis")
+        st.caption(
+            "Primary hub definition: a gene must rank within the Top "
+            f"{effective_top_n} connected targets for all four unweighted topology metrics "
+            "(Degree, Betweenness, Closeness and Eigenvector)."
+        )
+
         if centrality.empty:
             st.warning(
                 "Centrality cannot be calculated because no PPI edges passed the selected threshold."
             )
         else:
-            st.dataframe(hubs, use_container_width=True, hide_index=True)
-            fig_hub = centrality_figure(hubs, settings["hub_metric"])
+            if len(centrality) <= effective_top_n:
+                st.warning(
+                    "The number of connected targets is less than or equal to the selected Top-N. "
+                    "Every connected target can therefore enter every Top-N list, so 4/4 consensus "
+                    "has little discriminatory value. Reduce Top N or use a larger network."
+                )
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Connected targets", len(centrality))
+            c2.metric("Top N per metric", effective_top_n)
+            c3.metric("4/4 consensus hubs", len(hubs))
+            c4.metric("Isolated at threshold", len(isolated_targets))
+
+            st.markdown("#### 4/4 consensus hubs")
+            if hubs.empty:
+                st.info("No gene appeared in the Top-N lists of all four centrality measures.")
+            else:
+                hub_cols = [
+                    "Gene",
+                    "Degree", "Degree rank",
+                    "Betweenness", "Betweenness rank",
+                    "Closeness", "Closeness rank",
+                    "Eigenvector", "Eigenvector rank",
+                    "Consensus", "Mean rank",
+                ]
+                st.dataframe(hubs[hub_cols], use_container_width=True, hide_index=True)
+
+            fig_hub = consensus_centrality_figure(consensus_ranked, effective_top_n)
             st.pyplot(fig_hub, use_container_width=True)
-            render_downloads("hub_genes_centrality", fig_hub)
+            render_downloads("consensus_hub_centrality_4panel", fig_hub)
             plt.close(fig_hub)
-            st.download_button(
-                "Download all centrality metrics",
-                dataframe_tsv(centrality),
-                "centrality_all_genes.tsv",
-                "text/tab-separated-values",
-            )
-            st.download_button(
-                "Download top hub genes",
+
+            st.markdown("#### All connected targets and consensus membership")
+            st.dataframe(consensus_ranked, use_container_width=True, hide_index=True)
+
+            if isolated_targets:
+                with st.expander(
+                    f"Mapped targets with no retained PPI edge at this threshold ({len(isolated_targets)})"
+                ):
+                    st.write(", ".join(isolated_targets))
+                    st.caption(
+                        "These targets are retained in the analysis record but are excluded from "
+                        "topology-based hub ranking because they have no edge in the filtered PPI network."
+                    )
+
+            d1, d2, d3 = st.columns(3)
+            d1.download_button(
+                "Download consensus hubs",
                 dataframe_tsv(hubs),
-                "hub_genes.tsv",
+                "consensus_hubs_4of4.tsv",
                 "text/tab-separated-values",
+                use_container_width=True,
             )
+            d2.download_button(
+                "Download all rankings",
+                dataframe_tsv(consensus_ranked),
+                "centrality_consensus_rankings.tsv",
+                "text/tab-separated-values",
+                use_container_width=True,
+            )
+            isolated_df = pd.DataFrame({"Gene": isolated_targets})
+            d3.download_button(
+                "Download isolated targets",
+                dataframe_tsv(isolated_df),
+                "isolated_targets_at_threshold.tsv",
+                "text/tab-separated-values",
+                use_container_width=True,
+            )
+
             st.info(
-                "Hub status is network- and threshold-dependent. Degree, betweenness, closeness, "
-                "eigenvector and PageRank quantify different aspects of centrality; they should "
-                "not be interpreted as direct biological causality."
+                "STRING confidence is used here to decide which PPI edges are retained. "
+                "The four primary centrality measures are then calculated on the unweighted "
+                "filtered topology. A 4/4 hub is a network-topology consensus candidate, not "
+                "proof of causality or therapeutic importance."
             )
 
     with tab_enrich:
@@ -452,7 +540,11 @@ if analysis:
             "tables/string_mapping.tsv": dataframe_tsv(mapping),
             "tables/string_network_edges.tsv": dataframe_tsv(network),
             "tables/centrality_all_genes.tsv": dataframe_tsv(centrality),
-            "tables/hub_genes.tsv": dataframe_tsv(hubs),
+            "tables/centrality_consensus_rankings.tsv": dataframe_tsv(consensus_ranked),
+            "tables/consensus_hubs_4of4.tsv": dataframe_tsv(hubs),
+            "tables/isolated_targets_at_threshold.tsv": dataframe_tsv(
+                pd.DataFrame({"Gene": isolated_targets})
+            ),
             "tables/enrichment_all.tsv": dataframe_tsv(enrichment),
         }
 
@@ -472,10 +564,10 @@ if analysis:
                 files[f"figures/string_ppi_network.{fmt}"] = figure_bytes(fig, fmt)
             plt.close(fig)
 
-        if not hubs.empty:
-            fig = centrality_figure(hubs, settings["hub_metric"])
+        if not centrality.empty:
+            fig = consensus_centrality_figure(consensus_ranked, effective_top_n)
             for fmt in ["png", "pdf", "svg"]:
-                files[f"figures/hub_genes_centrality.{fmt}"] = figure_bytes(fig, fmt)
+                files[f"figures/consensus_hub_centrality_4panel.{fmt}"] = figure_bytes(fig, fmt)
             plt.close(fig)
 
         for category, label in CATEGORY_LABELS.items():
@@ -502,14 +594,19 @@ if analysis:
             f"STRING native figure style: {settings.get('network_flavor', 'evidence')}\n"
             f"Minimum STRING interaction score: {settings['required_score']}/1000\n"
             f"Enrichment significance threshold: FDR <= {settings['fdr_cutoff']}\n"
-            f"Hub ranking metric: {settings['hub_metric']}\n"
-            f"Top hub genes requested: {settings['top_n']}\n\n"
+            f"Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector centrality\n"
+            f"Top N per centrality metric: {effective_top_n}\n"
+            f"4/4 consensus hubs identified: {len(hubs)}\n\n"
             "STRING identifiers were mapped using get_string_ids. The PPI edge list was obtained "
             "from the STRING network API with no added neighbor nodes. The official STRING-native "
-            "network was also retrieved as a high-resolution PNG and SVG when available. Network "
-            "centrality was calculated locally with NetworkX. Confidence scores were used as edge strengths; "
-            "inverse confidence was used as distance for shortest-path-based metrics. Functional "
-            "enrichment was obtained from the STRING enrichment API and filtered by false discovery "
+            "network was also retrieved as a high-resolution PNG and SVG when available. The selected "
+            "STRING confidence score was used only as the edge-retention threshold for primary hub "
+            "analysis; it was not treated as biochemical interaction strength. Degree, betweenness, "
+            "closeness and eigenvector centrality were calculated on the resulting unweighted topology. "
+            "For each metric, the Top-N connected targets were selected, and targets present in all four "
+            "Top-N lists were designated 4/4 consensus hubs. Mapped targets with no retained PPI edge "
+            "were reported separately and excluded from topology-based ranking. Functional enrichment "
+            "was obtained from the STRING enrichment API and filtered by false discovery "
             "rate (FDR).\n"
         )
         files["settings.json"] = json.dumps(settings, indent=2).encode("utf-8")
