@@ -49,7 +49,11 @@ def _repo_root() -> Path:
 
 def _r_env() -> dict[str, str]:
     env = os.environ.copy()
-    user_lib = env.get("PUBLICATION_R_LIB") or str(_repo_root() / ".r-library")
+    user_lib = (
+        env.get("PUBLICATION_R_LIB")
+        or env.get("R_LIBS_USER")
+        or str(_repo_root() / ".r-library")
+    )
     Path(user_lib).mkdir(parents=True, exist_ok=True)
     env["R_LIBS_USER"] = user_lib
     return env
