@@ -75,14 +75,17 @@ def publication_environment_status(taxon_id: int) -> tuple[bool, list[str]]:
         "missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly=TRUE)]; "
         "cat(paste(missing, collapse='\\n'))"
     )
-    proc = subprocess.run(
-        ["Rscript", "-e", r_expr],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        env=_r_env(),
-    )
+    try:
+        proc = subprocess.run(
+            ["Rscript", "-e", r_expr],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            env=_r_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return False, ["R environment check timed out"]
     if proc.returncode != 0:
         return False, ["R environment check failed"]
     missing = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
@@ -111,14 +114,32 @@ def ensure_publication_environment(taxon_id: int) -> None:
             "Publication enrichment currently supports human, mouse and rat."
         )
 
-    proc = subprocess.run(
-        ["Rscript", str(installer), organism],
-        capture_output=True,
-        text=True,
-        timeout=1200,
-        check=False,
-        env=_r_env(),
-    )
+    try:
+        proc = subprocess.run(
+            ["Rscript", str(installer), organism],
+            capture_output=True,
+            text=True,
+            timeout=1200,
+            check=False,
+            env=_r_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = ""
+        if exc.stdout:
+            partial += exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout)
+        if exc.stderr:
+            partial += "\n" + (
+                exc.stderr.decode(errors="replace")
+                if isinstance(exc.stderr, bytes)
+                else str(exc.stderr)
+            )
+        tail = partial.strip()[-3000:]
+        detail = f" Last installer output: {tail}" if tail else ""
+        raise PublicationEnrichmentError(
+            "R/Bioconductor installation exceeded 20 minutes on this host and was stopped. "
+            "Do not retry installation from the analysis button; use a prebuilt R environment instead."
+            + detail
+        ) from None
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "Unknown R installation error").strip()
         raise PublicationEnrichmentError(
@@ -220,14 +241,19 @@ def run_publication_enrichment(
         background_arg,
     ]
 
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=900,
-        check=False,
-        env=_r_env(),
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+            env=_r_env(),
+        )
+    except subprocess.TimeoutExpired:
+        raise PublicationEnrichmentError(
+            "Publication enrichment exceeded 15 minutes and was stopped."
+        ) from None
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "Unknown R error").strip()
         raise PublicationEnrichmentError(
