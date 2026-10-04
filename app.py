@@ -24,7 +24,7 @@ from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 5
+APP_STATE_VERSION = 6
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
@@ -633,10 +633,12 @@ if analysis:
             publication_result is not None
             and publication_signature.get("taxon_id") == settings["taxon_id"]
             and publication_signature.get("foreground")
-            == (
-                mapping["preferredName"].dropna().astype(str).drop_duplicates().tolist()
-                if "preferredName" in mapping.columns
-                else []
+            == list(
+                dict.fromkeys(
+                    str(x).strip()
+                    for x in settings.get("submitted_targets", [])
+                    if str(x).strip()
+                )
             )
         )
         if publication_matches_current:
