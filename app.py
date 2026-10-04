@@ -15,13 +15,20 @@ from modules.hub_consensus_v2 import (
 )
 from modules.hub_plots_v2 import consensus_centrality_figure, network_figure
 from modules.plotting import enrichment_figure, figure_bytes
+from modules.publication_ui import (
+    publication_export_files,
+    publication_methods_text,
+    render_publication_enrichment,
+)
 from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 3
+APP_STATE_VERSION = 4
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
+    st.session_state.pop("publication_result", None)
+    st.session_state.pop("publication_result_signature", None)
     st.session_state["_app_state_version"] = APP_STATE_VERSION
 
 SPECIES = {
@@ -86,8 +93,9 @@ with st.expander("What this app does", expanded=False):
         1. Validates and maps submitted targets with STRING.
         2. Retrieves a STRING protein–protein interaction (PPI) network at your chosen confidence threshold.
         3. Calculates Degree, Betweenness, Closeness and Eigenvector centrality and identifies 4/4 consensus hubs.
-        4. Retrieves GO Biological Process, Molecular Function, Cellular Component, KEGG and Reactome enrichment.
-        5. Exports raw TSV tables, high-resolution PNG/PDF/SVG figures and a complete ZIP package.
+        4. Provides Quick STRING enrichment plus a validated Publication Enrichment workflow using clusterProfiler and ReactomePA.
+        5. Reduces redundant GO terms with Wang semantic similarity and Reactome pathways with Jaccard similarity.
+        6. Exports raw tables, non-redundant tables, high-resolution PNG/PDF/SVG figures and reproducibility metadata.
         """
     )
     st.info(
@@ -125,7 +133,7 @@ with st.sidebar:
         }[x],
     )
     fdr_cutoff = st.select_slider(
-        "Enrichment FDR cutoff",
+        "Quick STRING enrichment FDR cutoff",
         options=[0.001, 0.01, 0.05, 0.10],
         value=0.05,
     )
@@ -201,6 +209,9 @@ if run:
 
     mapped_queries = set(mapping.get("queryItem", pd.Series(dtype=str)).astype(str).str.upper())
     unresolved = [g for g in targets if g.upper() not in mapped_queries]
+
+    st.session_state.pop("publication_result", None)
+    st.session_state.pop("publication_result_signature", None)
 
     st.session_state["analysis"] = {
         "mapping": mapping,
@@ -472,63 +483,73 @@ if analysis:
             )
 
     with tab_enrich:
-        st.subheader("Functional enrichment")
-        if len(mapping) < 2:
-            st.warning(
-                "STRING enrichment is not interpreted for a single mapped target. "
-                "Submit at least two targets."
-            )
-        elif enrichment.empty:
-            st.warning("No enrichment results were returned.")
-        else:
-            for category, label in CATEGORY_LABELS.items():
-                subset = enrichment_subset(
-                    enrichment,
-                    category,
-                    settings["fdr_cutoff"],
+        quick_enrich_tab, publication_enrich_tab = st.tabs(
+            ["Quick enrichment (STRING)", "Publication enrichment (R/Bioconductor)"]
+        )
+
+        with quick_enrich_tab:
+            st.subheader("Quick STRING enrichment")
+            if len(mapping) < 2:
+                st.warning(
+                    "STRING enrichment is not interpreted for a single mapped target. "
+                    "Submit at least two targets."
                 )
-                with st.expander(
-                    f"{label} — {len(subset)} significant terms",
-                    expanded=category in {"Process", "KEGG", "RCTM"},
-                ):
-                    if subset.empty:
-                        st.caption(f"No terms at FDR ≤ {settings['fdr_cutoff']}.")
-                        continue
-                    cols = [
-                        c
-                        for c in [
-                            "term",
-                            "description",
-                            "number_of_genes",
-                            "number_of_genes_in_background",
-                            "strength",
-                            "signal",
-                            "fdr",
-                            "preferredNames",
+            elif enrichment.empty:
+                st.warning("No enrichment results were returned.")
+            else:
+                for category, label in CATEGORY_LABELS.items():
+                    subset = enrichment_subset(
+                        enrichment,
+                        category,
+                        settings["fdr_cutoff"],
+                    )
+                    with st.expander(
+                        f"{label} — {len(subset)} significant terms",
+                        expanded=category in {"Process", "KEGG", "RCTM"},
+                    ):
+                        if subset.empty:
+                            st.caption(f"No terms at FDR ≤ {settings['fdr_cutoff']}.")
+                            continue
+                        cols = [
+                            c
+                            for c in [
+                                "term",
+                                "description",
+                                "number_of_genes",
+                                "number_of_genes_in_background",
+                                "strength",
+                                "signal",
+                                "fdr",
+                                "preferredNames",
+                            ]
+                            if c in subset.columns
                         ]
-                        if c in subset.columns
-                    ]
-                    st.dataframe(
-                        subset[cols] if cols else subset,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                    fig = enrichment_figure(
-                        subset,
-                        label,
-                        settings["enrichment_top_n"],
-                    )
-                    st.pyplot(fig, use_container_width=True)
-                    safe = category.lower()
-                    render_downloads(f"enrichment_{safe}", fig)
-                    plt.close(fig)
-                    st.download_button(
-                        f"Download {label} TSV",
-                        dataframe_tsv(subset),
-                        f"enrichment_{safe}.tsv",
-                        "text/tab-separated-values",
-                        key=f"tsv_{safe}",
-                    )
+                        st.dataframe(
+                            subset[cols] if cols else subset,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        fig = enrichment_figure(
+                            subset,
+                            label,
+                            settings["enrichment_top_n"],
+                        )
+                        st.pyplot(fig, use_container_width=True)
+                        safe = category.lower()
+                        render_downloads(f"enrichment_{safe}", fig)
+                        plt.close(fig)
+                        st.download_button(
+                            f"Download {label} TSV",
+                            dataframe_tsv(subset),
+                            f"enrichment_{safe}.tsv",
+                            "text/tab-separated-values",
+                            key=f"tsv_{safe}",
+                        )
+
+
+
+        with publication_enrich_tab:
+            render_publication_enrichment(mapping, settings)
 
     with tab_export:
         st.subheader("Complete reproducible results package")
@@ -583,6 +604,27 @@ if analysis:
                     files[f"figures/enrichment_{category.lower()}.{fmt}"] = figure_bytes(fig, fmt)
                 plt.close(fig)
 
+        publication_result = st.session_state.get("publication_result")
+        publication_signature = st.session_state.get("publication_result_signature", {})
+        publication_matches_current = (
+            publication_result is not None
+            and publication_signature.get("taxon_id") == settings["taxon_id"]
+            and publication_signature.get("foreground")
+            == (
+                mapping["preferredName"].dropna().astype(str).drop_duplicates().tolist()
+                if "preferredName" in mapping.columns
+                else []
+            )
+        )
+        if publication_matches_current:
+            publication_top_n = int(st.session_state.get("publication_figure_top_n", 10))
+            files.update(
+                publication_export_files(
+                    publication_result,
+                    top_n_per_category=publication_top_n,
+                )
+            )
+
         methods = (
             "NETWORK PHARMACOLOGY / TOXICOLOGY ANALYSIS\n\n"
             f"Organism: {settings['species']} (NCBI taxon {settings['taxon_id']})\n"
@@ -605,6 +647,9 @@ if analysis:
             "was obtained from the STRING enrichment API and filtered by false discovery "
             "rate (FDR).\n"
         )
+        if publication_matches_current:
+            methods += "\n\n" + publication_methods_text(publication_result.summary)
+
         files["settings.json"] = json.dumps(settings, indent=2).encode("utf-8")
         zip_bytes = build_results_zip(files, methods)
         st.download_button(
