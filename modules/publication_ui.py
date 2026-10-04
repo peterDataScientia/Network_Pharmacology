@@ -13,9 +13,12 @@ from modules.plotting import figure_bytes
 from modules.publication_enrichment import (
     PublicationEnrichmentError,
     PublicationEnrichmentResult,
+    publication_backend_configured,
+    publication_backend_status,
     publication_environment_status,
     rscript_available,
     run_publication_enrichment,
+    run_publication_enrichment_remote,
 )
 from modules.publication_plots import mirrored_enrichment_figure
 
@@ -126,30 +129,48 @@ def render_publication_enrichment(
     )
 
     taxon_id = int(settings["taxon_id"])
-    if not rscript_available():
-        st.warning(
-            "Rscript is not available on this host, so Publication Enrichment cannot run here. "
-            "Quick STRING enrichment remains fully available."
-        )
-        return
+    use_remote_backend = publication_backend_configured()
 
-    ready, missing = publication_environment_status(taxon_id)
-    if ready:
-        st.success("R/Bioconductor publication environment is ready.")
+    if use_remote_backend:
+        backend_ready, backend_info = publication_backend_status()
+        if backend_ready:
+            versions = backend_info.get("versions", {})
+            st.success(
+                "Publication backend is ready · "
+                f"clusterProfiler {versions.get('clusterProfiler', '?')} · "
+                f"ReactomePA {versions.get('ReactomePA', '?')}"
+            )
+        else:
+            st.error(
+                "The prebuilt publication-enrichment backend is configured but not reachable/ready."
+            )
+            detail = backend_info.get("detail") if isinstance(backend_info, dict) else None
+            if detail:
+                st.caption(str(detail))
+            return
     else:
-        st.error(
-            "Publication Enrichment is not ready on this Streamlit server. "
-            "Automatic Bioconductor installation from the analysis button has been disabled "
-            "because the free server exceeded the 20-minute installation limit. "
-            "Quick STRING enrichment remains available."
-        )
-        if missing and missing != ["Rscript"]:
-            st.caption("Missing R components: " + ", ".join(missing))
-        st.caption(
-            "The validated R workflow itself is unchanged. This live mode now requires a "
-            "prebuilt R/Bioconductor environment instead of compiling packages during a user session."
-        )
-        return
+        if not rscript_available():
+            st.warning(
+                "Publication Enrichment is not configured on this deployment. "
+                "Quick STRING enrichment remains fully available."
+            )
+            st.caption(
+                "Set PUBLICATION_BACKEND_URL (and PUBLICATION_BACKEND_TOKEN when enabled) "
+                "to use the validated prebuilt R/Bioconductor backend."
+            )
+            return
+
+        ready, missing = publication_environment_status(taxon_id)
+        if ready:
+            st.success("Local R/Bioconductor publication environment is ready.")
+        else:
+            st.error(
+                "Publication Enrichment is not ready on this server. "
+                "Automatic Bioconductor installation from the analysis button is disabled."
+            )
+            if missing and missing != ["Rscript"]:
+                st.caption("Missing R components: " + ", ".join(missing))
+            return
 
     source_type = st.selectbox(
         "Where did this target list come from?",
@@ -241,13 +262,21 @@ def render_publication_enrichment(
         else:
             with st.spinner("Running publication enrichment…"):
                 try:
-                    result = run_publication_enrichment(
-                        targets=foreground,
-                        taxon_id=taxon_id,
-                        background_mode=bg_mode,
-                        custom_background=custom_background,
-                        auto_install=False,
-                    )
+                    if use_remote_backend:
+                        result = run_publication_enrichment_remote(
+                            targets=foreground,
+                            taxon_id=taxon_id,
+                            background_mode=bg_mode,
+                            custom_background=custom_background,
+                        )
+                    else:
+                        result = run_publication_enrichment(
+                            targets=foreground,
+                            taxon_id=taxon_id,
+                            background_mode=bg_mode,
+                            custom_background=custom_background,
+                            auto_install=False,
+                        )
                 except PublicationEnrichmentError as exc:
                     st.error(str(exc))
                 else:

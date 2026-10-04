@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 
 class PublicationEnrichmentError(RuntimeError):
@@ -57,6 +58,112 @@ def _r_env() -> dict[str, str]:
     Path(user_lib).mkdir(parents=True, exist_ok=True)
     env["R_LIBS_USER"] = user_lib
     return env
+
+
+def publication_backend_url() -> str:
+    return os.getenv("PUBLICATION_BACKEND_URL", "").strip().rstrip("/")
+
+
+def publication_backend_configured() -> bool:
+    return bool(publication_backend_url())
+
+
+def _backend_headers() -> dict[str, str]:
+    token = os.getenv("PUBLICATION_BACKEND_TOKEN", "").strip()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def publication_backend_status(timeout: int = 15) -> tuple[bool, dict]:
+    url = publication_backend_url()
+    if not url:
+        return False, {"detail": "Publication backend URL is not configured."}
+    try:
+        response = requests.get(f"{url}/health", timeout=timeout)
+    except requests.RequestException as exc:
+        return False, {"detail": f"Publication backend is unreachable: {exc}"}
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"detail": response.text[:1000]}
+
+    if response.status_code != 200:
+        return False, payload
+    return payload.get("status") == "ok", payload
+
+
+def run_publication_enrichment_remote(
+    targets: list[str],
+    taxon_id: int,
+    background_mode: str,
+    custom_background: list[str] | None = None,
+    timeout: int = 1250,
+) -> PublicationEnrichmentResult:
+    if taxon_id not in ORGANISM_CODE:
+        raise PublicationEnrichmentError(
+            "Publication enrichment currently supports human, mouse and rat."
+        )
+
+    url = publication_backend_url()
+    if not url:
+        raise PublicationEnrichmentError(
+            "Publication enrichment backend is not configured."
+        )
+
+    payload = {
+        "targets": targets,
+        "organism": ORGANISM_CODE[taxon_id],
+        "background_mode": background_mode,
+        "custom_background": custom_background or [],
+    }
+
+    try:
+        response = requests.post(
+            f"{url}/v1/enrichment",
+            headers=_backend_headers(),
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        raise PublicationEnrichmentError(
+            "The publication enrichment backend exceeded the allowed request time."
+        ) from None
+    except requests.RequestException as exc:
+        raise PublicationEnrichmentError(
+            f"Could not contact the publication enrichment backend: {exc}"
+        ) from None
+
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"detail": response.text[:4000]}
+
+    if response.status_code == 429:
+        raise PublicationEnrichmentError(
+            "The publication enrichment backend is currently processing another analysis. "
+            "Please try again shortly."
+        )
+    if response.status_code >= 400:
+        detail = data.get("detail", f"HTTP {response.status_code}")
+        raise PublicationEnrichmentError(str(detail))
+
+    if data.get("status") != "ok":
+        raise PublicationEnrichmentError(
+            str(data.get("detail", "Publication backend returned an invalid response."))
+        )
+
+    tables: dict[str, pd.DataFrame] = {}
+    for key, records in (data.get("tables") or {}).items():
+        tables[key] = pd.DataFrame(records or [])
+
+    return PublicationEnrichmentResult(
+        outdir=Path(tempfile.mkdtemp(prefix="publication_remote_")),
+        summary=data.get("summary") or {},
+        tables=tables,
+    )
 
 
 def rscript_available() -> bool:
@@ -126,7 +233,11 @@ def ensure_publication_environment(taxon_id: int) -> None:
     except subprocess.TimeoutExpired as exc:
         partial = ""
         if exc.stdout:
-            partial += exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout)
+            partial += (
+                exc.stdout.decode(errors="replace")
+                if isinstance(exc.stdout, bytes)
+                else str(exc.stdout)
+            )
         if exc.stderr:
             partial += "\n" + (
                 exc.stderr.decode(errors="replace")
@@ -164,15 +275,9 @@ def run_publication_enrichment(
     background_mode: str,
     custom_background: list[str] | None = None,
     workdir: str | Path | None = None,
-    auto_install: bool = True,
+    auto_install: bool = False,
 ) -> PublicationEnrichmentResult:
-    """Run the reproducible R/Bioconductor ORA workflow via Rscript.
-
-    background_mode:
-      - default: package/default enrichment universe
-      - annotated: all Entrez IDs represented in the selected organism OrgDb
-      - custom: user-supplied gene symbols
-    """
+    """Run the reproducible R/Bioconductor ORA workflow locally via Rscript."""
     if taxon_id not in ORGANISM_CODE:
         raise PublicationEnrichmentError(
             "Publication enrichment currently supports human, mouse and rat."
