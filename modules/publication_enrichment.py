@@ -192,10 +192,15 @@ def _run_remote_publication_enrichment(
             "custom_background": custom_background,
         }
     ).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    backend_key = os.environ.get("PUBLICATION_BACKEND_KEY", "").strip()
+    if backend_key:
+        headers["X-API-Key"] = backend_key
+
     request = urllib.request.Request(
         base_url + "/enrich",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
