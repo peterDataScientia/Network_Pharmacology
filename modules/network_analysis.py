@@ -21,6 +21,58 @@ def build_graph(network: pd.DataFrame) -> nx.Graph:
     return graph
 
 
+def pagerank_numpy(
+    graph: nx.Graph,
+    alpha: float = 0.85,
+    max_iter: int = 200,
+    tol: float = 1e-10,
+) -> dict:
+    """Weighted PageRank implemented with NumPy only.
+
+    NetworkX's PageRank implementation depends on SciPy. Streamlit Community
+    Cloud may not have SciPy installed, so this lightweight implementation keeps
+    the app deployable without adding that heavy dependency.
+    """
+    nodes = list(graph.nodes)
+    n = len(nodes)
+    if n == 0:
+        return {}
+
+    index = {node: i for i, node in enumerate(nodes)}
+    matrix = np.zeros((n, n), dtype=float)
+
+    for u, v, data in graph.edges(data=True):
+        weight = float(data.get("weight", 1.0) or 1.0)
+        i, j = index[u], index[v]
+        matrix[i, j] += weight
+        matrix[j, i] += weight
+
+    row_sums = matrix.sum(axis=1)
+    dangling = row_sums == 0
+
+    transition = np.zeros_like(matrix)
+    active = ~dangling
+    transition[active] = matrix[active] / row_sums[active, None]
+
+    rank = np.full(n, 1.0 / n)
+    teleport = np.full(n, (1.0 - alpha) / n)
+
+    for _ in range(max_iter):
+        dangling_mass = rank[dangling].sum() / n
+        new_rank = alpha * (rank @ transition + dangling_mass) + teleport
+
+        if np.abs(new_rank - rank).sum() < tol:
+            rank = new_rank
+            break
+        rank = new_rank
+
+    total = rank.sum()
+    if total > 0:
+        rank = rank / total
+
+    return {node: float(rank[index[node]]) for node in nodes}
+
+
 def centrality_table(graph: nx.Graph) -> pd.DataFrame:
     if graph.number_of_nodes() == 0:
         return pd.DataFrame()
@@ -30,7 +82,7 @@ def centrality_table(graph: nx.Graph) -> pd.DataFrame:
     strength = dict(graph.degree(weight="weight"))
     betweenness = nx.betweenness_centrality(graph, weight="distance", normalized=True)
     closeness = nx.closeness_centrality(graph, distance="distance")
-    pagerank = nx.pagerank(graph, weight="weight")
+    pagerank = pagerank_numpy(graph)
 
     try:
         eigenvector = nx.eigenvector_centrality(graph, max_iter=2000, weight="weight")
