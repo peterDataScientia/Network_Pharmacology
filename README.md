@@ -71,12 +71,12 @@ No API key is required for STRING. The app sends submitted identifiers to the pu
 
 ## Planned extensions
 
-Potential later modules include PPI-enrichment statistics, R/Bioconductor enrichment with redundancy reduction, optional transcriptomic validation, additional topology algorithms, module detection and richer provenance/report generation.
+Potential later modules include PPI-enrichment statistics, optional transcriptomic validation, additional topology algorithms, module detection and richer provenance/report generation.
 
 
-## Development: Publication Enrichment
+## Publication Enrichment
 
-The branch `dev-publication-enrichment` contains an isolated publication-oriented enrichment prototype. It does **not** replace the production STRING enrichment until validation passes.
+The main application includes a publication-oriented enrichment mode alongside the existing quick STRING enrichment. The validated R/Bioconductor workflow is invoked from the **Enrichment** tab and does not disable or replace the STRING workflow.
 
 Architecture:
 
@@ -102,7 +102,7 @@ Reactome Jaccard reduction (0.70)
 CSV + JSON + mirrored publication figure
 ```
 
-The development UI is `publication_enrichment_dev.py`.
+The production UI is integrated into `app.py`; `publication_enrichment_dev.py` is retained as an isolated development harness.
 
 ### Background assistant
 
@@ -130,4 +130,4 @@ python validation/run_egcg_validation.py
 
 The validation intentionally runs both the older default-background design and the newer explicit all-annotated-human background design as separate analyses.
 
-A GitHub Actions workflow, `.github/workflows/validate-publication-enrichment.yml`, performs Python syntax checks, installs the Bioconductor environment and runs the EGCG validation. Publication enrichment should not be merged into `main` until this validation is reviewed.
+A GitHub Actions workflow, `.github/workflows/validate-publication-enrichment.yml`, performs Python syntax checks, installs the Bioconductor environment and runs the EGCG validation. The EGCG reference workflow reproduced all eight raw/reduced term counts exactly before production integration.
