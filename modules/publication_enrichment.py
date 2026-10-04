@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -27,9 +28,105 @@ ORGANISM_CODE = {
     10116: "rat",
 }
 
+ORGANISM_DB = {
+    9606: "org.Hs.eg.db",
+    10090: "org.Mm.eg.db",
+    10116: "org.Rn.eg.db",
+}
+
+BASE_R_PACKAGES = [
+    "clusterProfiler",
+    "ReactomePA",
+    "AnnotationDbi",
+    "GOSemSim",
+    "jsonlite",
+]
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _r_env() -> dict[str, str]:
+    env = os.environ.copy()
+    user_lib = env.get("PUBLICATION_R_LIB") or str(_repo_root() / ".r-library")
+    Path(user_lib).mkdir(parents=True, exist_ok=True)
+    env["R_LIBS_USER"] = user_lib
+    return env
+
 
 def rscript_available() -> bool:
     return shutil.which("Rscript") is not None
+
+
+def publication_environment_status(taxon_id: int) -> tuple[bool, list[str]]:
+    if taxon_id not in ORGANISM_CODE:
+        return False, ["unsupported organism"]
+    if not rscript_available():
+        return False, ["Rscript"]
+
+    packages = BASE_R_PACKAGES + [ORGANISM_DB[taxon_id]]
+    r_expr = (
+        "pkgs <- c(" + ",".join(json.dumps(p) for p in packages) + "); "
+        "missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly=TRUE)]; "
+        "cat(paste(missing, collapse='\\n'))"
+    )
+    proc = subprocess.run(
+        ["Rscript", "-e", r_expr],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=_r_env(),
+    )
+    if proc.returncode != 0:
+        return False, ["R environment check failed"]
+    missing = [x.strip() for x in proc.stdout.splitlines() if x.strip()]
+    return len(missing) == 0, missing
+
+
+def ensure_publication_environment(taxon_id: int) -> None:
+    ready, missing = publication_environment_status(taxon_id)
+    if ready:
+        return
+
+    if not rscript_available():
+        raise PublicationEnrichmentError(
+            "Rscript is not available on this host. Quick STRING enrichment remains available."
+        )
+
+    installer = _repo_root() / "scripts" / "install_publication_enrichment.R"
+    if not installer.exists():
+        raise PublicationEnrichmentError(
+            f"Bioconductor installer not found: {installer}"
+        )
+
+    organism = ORGANISM_CODE.get(taxon_id)
+    if organism is None:
+        raise PublicationEnrichmentError(
+            "Publication enrichment currently supports human, mouse and rat."
+        )
+
+    proc = subprocess.run(
+        ["Rscript", str(installer), organism],
+        capture_output=True,
+        text=True,
+        timeout=1200,
+        check=False,
+        env=_r_env(),
+    )
+    if proc.returncode != 0:
+        details = (proc.stderr or proc.stdout or "Unknown R installation error").strip()
+        raise PublicationEnrichmentError(
+            "Could not prepare the R/Bioconductor environment. " + details[-5000:]
+        )
+
+    ready, still_missing = publication_environment_status(taxon_id)
+    if not ready:
+        raise PublicationEnrichmentError(
+            "R/Bioconductor setup completed but required packages are still missing: "
+            + ", ".join(still_missing or missing)
+        )
 
 
 def _write_lines(path: Path, values: list[str]) -> None:
@@ -42,6 +139,7 @@ def run_publication_enrichment(
     background_mode: str,
     custom_background: list[str] | None = None,
     workdir: str | Path | None = None,
+    auto_install: bool = True,
 ) -> PublicationEnrichmentResult:
     """Run the reproducible R/Bioconductor ORA workflow via Rscript.
 
@@ -76,14 +174,17 @@ def run_publication_enrichment(
                 "Custom background mode requires a non-empty background gene list."
             )
 
-    if not rscript_available():
-        raise PublicationEnrichmentError(
-            "Rscript is not available in this environment. "
-            "The quick STRING enrichment remains available."
-        )
+    if auto_install:
+        ensure_publication_environment(taxon_id)
+    else:
+        ready, missing = publication_environment_status(taxon_id)
+        if not ready:
+            raise PublicationEnrichmentError(
+                "Publication enrichment environment is not ready: "
+                + ", ".join(missing)
+            )
 
-    repo_root = Path(__file__).resolve().parents[1]
-    r_script = repo_root / "r" / "enrichment_publication.R"
+    r_script = _repo_root() / "r" / "enrichment_publication.R"
     if not r_script.exists():
         raise PublicationEnrichmentError(
             f"Publication enrichment R script not found: {r_script}"
@@ -121,6 +222,7 @@ def run_publication_enrichment(
         text=True,
         timeout=900,
         check=False,
+        env=_r_env(),
     )
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "Unknown R error").strip()
