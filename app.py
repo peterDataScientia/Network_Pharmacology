@@ -24,7 +24,7 @@ from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 4
+APP_STATE_VERSION = 5
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
@@ -107,6 +107,22 @@ with st.sidebar:
     st.header("Analysis settings")
     species_label = st.selectbox("Organism", list(SPECIES), index=0)
     species = SPECIES[species_label]
+
+    string_version_label = st.selectbox(
+        "STRING database version",
+        [
+            "v12.0 — manuscript/reproducibility",
+            "v12.5 — newer/current pinned release",
+        ],
+        index=0,
+        help=(
+            "Network topology can change between STRING releases even with identical genes "
+            "and the same confidence threshold. Use v12.0 to reproduce the validated EGCG/RISI "
+            "reference workflow; use v12.5 for a newer pinned STRING network."
+        ),
+    )
+    string_version = "12.0" if string_version_label.startswith("v12.0") else "12.5"
+
     network_type = st.selectbox("STRING network type", ["functional", "physical"], index=0)
     flavor_options = ["evidence", "confidence", "actions"]
     if network_type == "functional":
@@ -197,6 +213,7 @@ if run:
                 score_label,
                 network_type,
                 network_flavor=network_flavor,
+                string_version=string_version,
             )
         except StringAPIError as exc:
             st.error(str(exc))
@@ -230,6 +247,7 @@ if run:
             "taxon_id": species,
             "network_type": network_type,
             "network_flavor": network_flavor,
+            "string_version": string_version,
             "required_score": score_label,
             "fdr_cutoff": fdr_cutoff,
             "top_n": top_n,
@@ -259,6 +277,11 @@ if analysis:
 
     st.divider()
     st.header("Results")
+    st.caption(
+        f"STRING v{settings.get('string_version', '12.0')} · "
+        f"{settings['network_type']} network · "
+        f"required score {settings['required_score']}/1000 · no added nodes"
+    )
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Submitted", len(settings["submitted_targets"]))
     m2.metric("Mapped by STRING", len(mapping))
@@ -628,6 +651,7 @@ if analysis:
         methods = (
             "NETWORK PHARMACOLOGY / TOXICOLOGY ANALYSIS\n\n"
             f"Organism: {settings['species']} (NCBI taxon {settings['taxon_id']})\n"
+            f"STRING version: {settings.get('string_version', '12.0')}\n"
             f"STRING network type: {settings['network_type']}\n"
             f"STRING native figure style: {settings.get('network_flavor', 'evidence')}\n"
             f"Minimum STRING interaction score: {settings['required_score']}/1000\n"
