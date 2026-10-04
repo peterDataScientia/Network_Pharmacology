@@ -137,12 +137,19 @@ def render_publication_enrichment(
     if ready:
         st.success("R/Bioconductor publication environment is ready.")
     else:
-        st.caption(
-            "The required R/Bioconductor packages are not installed yet. "
-            "They will be installed automatically the first time you run this mode; that first run can take several minutes."
+        st.error(
+            "Publication Enrichment is not ready on this Streamlit server. "
+            "Automatic Bioconductor installation from the analysis button has been disabled "
+            "because the free server exceeded the 20-minute installation limit. "
+            "Quick STRING enrichment remains available."
         )
         if missing and missing != ["Rscript"]:
-            st.caption("Pending packages: " + ", ".join(missing))
+            st.caption("Missing R components: " + ", ".join(missing))
+        st.caption(
+            "The validated R workflow itself is unchanged. This live mode now requires a "
+            "prebuilt R/Bioconductor environment instead of compiling packages during a user session."
+        )
+        return
 
     source_type = st.selectbox(
         "Where did this target list come from?",
@@ -232,17 +239,14 @@ def render_publication_enrichment(
         if bg_mode == "custom" and not custom_background:
             st.error("Custom background is selected, but no background genes were provided.")
         else:
-            with st.spinner(
-                "Preparing R/Bioconductor and running publication enrichment… "
-                "The first run on a fresh server can take several minutes."
-            ):
+            with st.spinner("Running publication enrichment…"):
                 try:
                     result = run_publication_enrichment(
                         targets=foreground,
                         taxon_id=taxon_id,
                         background_mode=bg_mode,
                         custom_background=custom_background,
-                        auto_install=True,
+                        auto_install=False,
                     )
                 except PublicationEnrichmentError as exc:
                     st.error(str(exc))
