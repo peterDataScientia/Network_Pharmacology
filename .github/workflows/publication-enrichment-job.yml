@@ -61,7 +61,18 @@ jobs:
 
       - name: Run publication enrichment
         run: |
-          docker run --rm             -v "$PWD/job_input:/job_input:ro"             -v "$PWD/job_output:/job_output"             "$IMAGE_NAME"             Rscript /app/r/enrichment_publication.R               /job_input/foreground_symbols.txt               /job_output               "${{ steps.prep.outputs.organism }}"               "${{ steps.prep.outputs.background_mode }}"               "${{ steps.prep.outputs.background_arg }}"
+          docker run --rm \
+            -v "$PWD/job_input:/job_input:ro" \
+            -v "$PWD/job_output:/job_output" \
+            -v "$PWD/r/enrichment_publication.R:/app/r/enrichment_publication.R:ro" \
+            "$IMAGE_NAME" \
+            Rscript /app/r/enrichment_publication.R \
+              /job_input/foreground_symbols.txt \
+              /job_output \
+              "${{ steps.prep.outputs.organism }}" \
+              "${{ steps.prep.outputs.background_mode }}" \
+              "${{ steps.prep.outputs.background_arg }}" \
+              "${{ steps.prep.outputs.settings_docker_path }}"
 
       - name: Validate versions and scientific output
         run: |
