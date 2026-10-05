@@ -1,0 +1,92 @@
+name: Build lightweight R centrality image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/centrality.Dockerfile"
+      - "r/network_centrality.R"
+      - "modules/reference_validation.py"
+      - "validation/egcg_risi_string_v12_network.tsv"
+      - "validation/validate_r_network_reference.py"
+      - ".github/workflows/build-centrality-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: lightweight-r-centrality-image-main
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/peterdatascientia/network-pharmacology-centrality:validated
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build lightweight centrality candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/centrality.Dockerfile
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME }}
+          cache-from: type=gha,scope=centrality-image
+          cache-to: type=gha,mode=max,scope=centrality-image
+
+      - name: Verify exact R and igraph versions
+        run: |
+          docker run --rm "$IMAGE_NAME" Rscript -e '
+            cat(R.version.string, "\n")
+            cat("igraph ", as.character(packageVersion("igraph")), "\n")
+            cat("jsonlite ", as.character(packageVersion("jsonlite")), "\n")
+            stopifnot(grepl("4.6.1", R.version.string))
+            stopifnot(as.character(packageVersion("igraph")) == "2.3.4")
+          '
+
+      - name: Run frozen R igraph centrality parity gate
+        run: |
+          rm -rf centrality_reference_output
+          mkdir -p centrality_reference_output
+
+          docker run --rm \
+            -v "$PWD/validation:/validation:ro" \
+            -v "$PWD/centrality_reference_output:/centrality_output" \
+            "$IMAGE_NAME" \
+            Rscript /analysis/network_centrality.R \
+              /validation/egcg_risi_string_v12_network.tsv \
+              /centrality_output \
+              10
+
+          python validation/validate_r_network_reference.py \
+            centrality_reference_output
+
+      - name: Show validated centrality reference
+        run: |
+          python - <<'PY'
+          import json
+          x=json.load(open("centrality_reference_output/centrality_summary.json"))
+          print("Centrality engine:", x["engine"])
+          print("Centrality nodes/edges/hubs:", x["nodes"], x["edges"], x["hub_count"])
+          PY
+
+      - name: Publish parity-validated lightweight centrality image
+        run: docker push "$IMAGE_NAME"
