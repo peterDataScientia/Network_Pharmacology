@@ -17,8 +17,10 @@ permissions:
   contents: read
   packages: read
 
+# Serialize heavy public jobs so a public Streamlit deployment cannot start
+# many 16-GB runners simultaneously.
 concurrency:
-  group: publication-enrichment-${{ inputs.request_id }}
+  group: publication-enrichment-global
   cancel-in-progress: false
 
 env:
