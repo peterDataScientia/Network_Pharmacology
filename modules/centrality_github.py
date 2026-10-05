@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 
 from modules.publication_github import (
+    GitHubPublicationError,
     _api_url,
     _headers,
     _json_request,
@@ -76,7 +77,10 @@ def centrality_runner_status() -> tuple[bool, list[str]]:
 
 
 def _current_ref_sha() -> str:
-    data = _json_request("GET", f"/commits/{github_ref()}", timeout=30)
+    try:
+        data = _json_request("GET", f"/commits/{github_ref()}", timeout=30)
+    except GitHubPublicationError as exc:
+        raise CentralityGitHubError(str(exc)) from None
     if not isinstance(data, dict) or not data.get("sha"):
         raise CentralityGitHubError("Could not determine the current GitHub commit.")
     return str(data["sha"])
@@ -137,14 +141,17 @@ def _encode_payload(
 
 
 def _matching_runs(request_id: str, ref_sha: str) -> list[dict]:
-    data = _json_request(
-        "GET",
-        (
-            f"/actions/workflows/{CENTRALITY_WORKFLOW}/runs"
-            f"?event=workflow_dispatch&branch={github_ref()}&per_page=100"
-        ),
-        timeout=45,
-    )
+    try:
+        data = _json_request(
+            "GET",
+            (
+                f"/actions/workflows/{CENTRALITY_WORKFLOW}/runs"
+                f"?event=workflow_dispatch&branch={github_ref()}&per_page=100"
+            ),
+            timeout=45,
+        )
+    except GitHubPublicationError as exc:
+        raise CentralityGitHubError(str(exc)) from None
     if not isinstance(data, dict):
         return []
 
@@ -186,7 +193,10 @@ def _wait_for_completion(
     last_status = None
 
     while time.monotonic() < deadline:
-        current = _json_request("GET", f"/actions/runs/{run_id}", timeout=30)
+        try:
+            current = _json_request("GET", f"/actions/runs/{run_id}", timeout=30)
+        except GitHubPublicationError as exc:
+            raise CentralityGitHubError(str(exc)) from None
         if not isinstance(current, dict):
             raise CentralityGitHubError("GitHub returned an invalid centrality run response.")
 
@@ -224,11 +234,14 @@ def _download_artifact(
     deadline = time.monotonic() + 90
 
     while time.monotonic() < deadline:
-        data = _json_request(
-            "GET",
-            f"/actions/runs/{run_id}/artifacts?per_page=100",
-            timeout=30,
-        )
+        try:
+            data = _json_request(
+                "GET",
+                f"/actions/runs/{run_id}/artifacts?per_page=100",
+                timeout=30,
+            )
+        except GitHubPublicationError as exc:
+            raise CentralityGitHubError(str(exc)) from None
         if isinstance(data, dict):
             for artifact in data.get("artifacts", []):
                 if artifact.get("name") == artifact_name and not artifact.get("expired", False):
@@ -385,18 +398,21 @@ def run_r_igraph_centrality(
     if active is None:
         existing_ids = {int(run.get("id", 0)) for run in matches}
         _emit(status_callback, "Submitting network centrality to R/igraph on GitHub Actions…")
-        _json_request(
-            "POST",
-            f"/actions/workflows/{CENTRALITY_WORKFLOW}/dispatches",
-            payload={
-                "ref": github_ref(),
-                "inputs": {
-                    "request_id": request_id,
-                    "payload_b64": payload_b64,
+        try:
+            _json_request(
+                "POST",
+                f"/actions/workflows/{CENTRALITY_WORKFLOW}/dispatches",
+                payload={
+                    "ref": github_ref(),
+                    "inputs": {
+                        "request_id": request_id,
+                        "payload_b64": payload_b64,
+                    },
                 },
-            },
-            timeout=45,
-        )
+                timeout=45,
+            )
+        except GitHubPublicationError as exc:
+            raise CentralityGitHubError(str(exc)) from None
         active = _wait_for_new_run(
             request_id,
             ref_sha,
