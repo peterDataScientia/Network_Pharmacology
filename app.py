@@ -25,7 +25,7 @@ from modules.publication_ui import (
 )
 from modules.string_api import StringAPIError, run_string_workflow
 from modules.string_filters import SOURCE_LABELS
-from modules.string_settings_ui import render_string_settings
+from modules.string_settings_ui import render_string_settings, string_settings_signature
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
@@ -171,26 +171,7 @@ if targets:
 previous_analysis = st.session_state.get("analysis")
 current_signature = {
     "submitted_targets": list(targets),
-    "taxon_id": species,
-    "string_version": string_version,
-    "network_type": network_type,
-    "network_flavor": network_flavor,
-    "active_sources": list(active_sources),
-    "required_score": score_label,
-    "first_shell": string_options["first_shell"],
-    "second_shell": string_options["second_shell"],
-    "typed_physical_edges": string_options["typed_physical_edges"],
-    "typed_regulatory_edges": string_options["typed_regulatory_edges"],
-    "show_regulatory_signs": string_options["show_regulatory_signs"],
-    "layout": string_options["layout"],
-    "colorblind_friendly": string_options["colorblind_friendly"],
-    "bubble_3d": string_options["bubble_3d"],
-    "block_structure_pics": string_options["block_structure_pics"],
-    "center_node_labels": string_options["center_node_labels"],
-    "show_query_node_labels": string_options["show_query_node_labels"],
-    "hide_disconnected_nodes": string_options["hide_disconnected_nodes"],
-    "hide_node_labels": string_options["hide_node_labels"],
-    "label_font_size": string_options["label_font_size"],
+    **string_settings_signature(string_options),
     "fdr_cutoff": fdr_cutoff,
     "top_n": top_n,
     "enrichment_top_n": enrichment_top_n,
