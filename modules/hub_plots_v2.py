@@ -81,7 +81,7 @@ def network_figure(
         if label_font_size is None:
             label_size = 7 if graph.number_of_nodes() <= 40 else 5
         else:
-            label_size = max(5, min(int(label_font_size), 18))
+            label_size = max(5, min(int(label_font_size), 50))
         nx.draw_networkx_labels(
             graph,
             pos,
