@@ -13,8 +13,8 @@ from modules.plotting import figure_bytes
 from modules.publication_enrichment import (
     PublicationEnrichmentError,
     PublicationEnrichmentResult,
-    publication_backend_url,
     publication_environment_status,
+    publication_execution_mode,
     rscript_available,
     run_publication_enrichment,
 )
@@ -67,6 +67,8 @@ def publication_methods_text(summary: dict) -> str:
         f"AnnotationDbi: {versions.get('AnnotationDbi', 'not recorded')}\n"
         f"GOSemSim: {versions.get('GOSemSim', 'not recorded')}\n"
         f"Organism annotation package version: {versions.get('organism_db', 'not recorded')}\n"
+        f"Execution backend: {summary.get('execution', {}).get('executor', 'local-or-remote')}\n"
+        f"Execution revision: {summary.get('execution', {}).get('ref_sha', 'not recorded')}\n"
     )
 
 
@@ -152,23 +154,33 @@ def render_publication_enrichment(
     )
 
     taxon_id = int(settings["taxon_id"])
-    backend = publication_backend_url()
+    executor = publication_execution_mode()
 
-    if not backend and not rscript_available():
+    if executor == "unavailable":
         st.warning(
-            "Publication Enrichment backend is not configured and Rscript is not available locally. "
+            "Publication Enrichment compute is not configured and Rscript is not available locally. "
             "Quick STRING enrichment remains fully available."
         )
         return
 
     ready, missing = publication_environment_status(taxon_id)
     if ready:
-        if backend:
+        if executor == "github-actions":
+            st.success(
+                "GitHub Actions publication runner is ready. "
+                "Heavy R/Bioconductor analysis will run on a temporary hosted runner."
+            )
+        elif executor == "remote-backend":
             st.success("Validated publication-enrichment backend is online and ready.")
         else:
             st.success("Local R/Bioconductor publication environment is ready.")
     else:
-        if backend:
+        if executor == "github-actions":
+            st.error(
+                "The GitHub Actions publication runner is not ready. "
+                "Quick STRING enrichment remains available."
+            )
+        elif executor == "remote-backend":
             st.error(
                 "The configured publication-enrichment backend is currently unavailable. "
                 "Quick STRING enrichment remains available."
@@ -277,28 +289,50 @@ def render_publication_enrichment(
         if bg_mode == "custom" and not custom_background:
             st.error("Custom background is selected, but no background genes were provided.")
         else:
-            with st.spinner("Running publication enrichment…"):
-                try:
-                    result = run_publication_enrichment(
-                        targets=foreground,
-                        taxon_id=taxon_id,
-                        background_mode=bg_mode,
-                        custom_background=custom_background,
-                        auto_install=False,
-                    )
-                except PublicationEnrichmentError as exc:
-                    st.error(str(exc))
-                else:
-                    st.session_state["publication_result"] = result
-                    st.session_state["publication_result_signature"] = {
-                        "taxon_id": taxon_id,
-                        "foreground": foreground,
-                        "background_label": background_label,
-                        "background_mode": bg_mode,
-                        "custom_background": custom_background,
-                        "source_type": source_type,
-                    }
-                    st.success("Publication enrichment completed.")
+            status_box = st.status(
+                (
+                    "Submitting publication enrichment to GitHub Actions…"
+                    if executor == "github-actions"
+                    else "Running publication enrichment…"
+                ),
+                expanded=executor == "github-actions",
+            )
+
+            def status_update(message: str) -> None:
+                status_box.write(message)
+
+            try:
+                result = run_publication_enrichment(
+                    targets=foreground,
+                    taxon_id=taxon_id,
+                    background_mode=bg_mode,
+                    custom_background=custom_background,
+                    auto_install=False,
+                    status_callback=status_update,
+                )
+            except PublicationEnrichmentError as exc:
+                status_box.update(
+                    label="Publication enrichment failed",
+                    state="error",
+                    expanded=True,
+                )
+                st.error(str(exc))
+            else:
+                status_box.update(
+                    label="Publication enrichment completed",
+                    state="complete",
+                    expanded=False,
+                )
+                st.session_state["publication_result"] = result
+                st.session_state["publication_result_signature"] = {
+                    "taxon_id": taxon_id,
+                    "foreground": foreground,
+                    "background_label": background_label,
+                    "background_mode": bg_mode,
+                    "custom_background": custom_background,
+                    "source_type": source_type,
+                }
+                st.success("Publication enrichment completed.")
 
     result = st.session_state.get("publication_result")
     signature = st.session_state.get("publication_result_signature", {})
