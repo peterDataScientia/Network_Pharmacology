@@ -117,6 +117,32 @@ CATEGORY_LABELS = {
 }
 
 
+def network_figure_compat(graph, hubs, settings):
+    """Render with new options when available, but tolerate an older hot-loaded module."""
+    common = {
+        "layout": settings.get("layout", "force_directed"),
+        "show_labels": not settings.get("hide_node_labels", False),
+        "label_font_size": settings.get("label_font_size", 12),
+        "colorblind_friendly": settings.get("colorblind_friendly", True),
+    }
+    try:
+        return network_figure(
+            graph,
+            hubs,
+            center_node_labels=settings.get("center_node_labels", False),
+            show_regulatory_signs=settings.get("show_regulatory_signs", True),
+            **common,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if (
+            "center_node_labels" not in message
+            and "show_regulatory_signs" not in message
+        ):
+            raise
+        return network_figure(graph, hubs, **common)
+
+
 def enrichment_subset(df: pd.DataFrame, category: str, fdr_cutoff: float) -> pd.DataFrame:
     if df.empty or "category" not in df.columns:
         return pd.DataFrame()
@@ -575,15 +601,10 @@ if analysis:
                     "hub-highlighted local network cannot be constructed."
                 )
             else:
-                fig_net = network_figure(
+                fig_net = network_figure_compat(
                     display_graph,
                     set(hubs["Gene"]) if not hubs.empty else set(),
-                    layout=settings.get("layout", "force_directed"),
-                    show_labels=not settings.get("hide_node_labels", False),
-                    label_font_size=settings.get("label_font_size", 12),
-                    colorblind_friendly=settings.get("colorblind_friendly", True),
-                    center_node_labels=settings.get("center_node_labels", False),
-                    show_regulatory_signs=settings.get("show_regulatory_signs", True),
+                    settings,
                 )
                 st.pyplot(fig_net, use_container_width=True)
                 render_downloads("consensus_hub_highlighted_ppi_network", fig_net)
@@ -809,15 +830,10 @@ if analysis:
             files["string_native_network_link.txt"] = native_media["link"].encode("utf-8")
 
         if display_graph.number_of_nodes() > 0:
-            fig = network_figure(
+            fig = network_figure_compat(
                 display_graph,
                 set(hubs["Gene"]) if not hubs.empty else set(),
-                layout=settings.get("layout", "force_directed"),
-                show_labels=not settings.get("hide_node_labels", False),
-                label_font_size=settings.get("label_font_size", 12),
-                colorblind_friendly=settings.get("colorblind_friendly", True),
-                center_node_labels=settings.get("center_node_labels", False),
-                show_regulatory_signs=settings.get("show_regulatory_signs", True),
+                settings,
             )
             for fmt in ["png", "pdf", "svg"]:
                 files[f"figures/string_interaction_network.{fmt}"] = figure_bytes(fig, fmt)
