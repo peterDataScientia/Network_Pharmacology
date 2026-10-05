@@ -67,7 +67,7 @@ def publication_methods_text(summary: dict) -> str:
         f"AnnotationDbi: {versions.get('AnnotationDbi', 'not recorded')}\n"
         f"GOSemSim: {versions.get('GOSemSim', 'not recorded')}\n"
         f"Organism annotation package version: {versions.get('organism_db', 'not recorded')}\n"
-        f"Execution backend: {summary.get('execution', {}).get('executor', 'local-or-remote')}\n"
+        f"Execution backend: {summary.get('execution', {}).get('executor', 'local-r')}\n"
         f"Execution revision: {summary.get('execution', {}).get('ref_sha', 'not recorded')}\n"
     )
 
@@ -170,19 +170,12 @@ def render_publication_enrichment(
                 "GitHub Actions publication runner is ready. "
                 "Heavy R/Bioconductor analysis will run on a temporary hosted runner."
             )
-        elif executor == "remote-backend":
-            st.success("Validated publication-enrichment backend is online and ready.")
         else:
             st.success("Local R/Bioconductor publication environment is ready.")
     else:
         if executor == "github-actions":
             st.error(
                 "The GitHub Actions publication runner is not ready. "
-                "Quick STRING enrichment remains available."
-            )
-        elif executor == "remote-backend":
-            st.error(
-                "The configured publication-enrichment backend is currently unavailable. "
                 "Quick STRING enrichment remains available."
             )
         else:
