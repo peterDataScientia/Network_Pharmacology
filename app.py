@@ -9,9 +9,11 @@ import streamlit as st
 from modules.io_utils import build_results_zip, dataframe_tsv, normalize_targets, targets_from_upload
 from modules.hub_consensus_v2 import (
     build_graph,
-    centrality_table,
-    consensus_hub_analysis,
     connected_and_isolated_targets,
+)
+from modules.centrality_github import (
+    CentralityGitHubError,
+    run_r_igraph_centrality,
 )
 from modules.hub_plots_v2 import consensus_centrality_figure, network_figure
 from modules.plotting import enrichment_figure, figure_bytes
@@ -24,7 +26,7 @@ from modules.string_api import StringAPIError, run_string_workflow
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 6
+APP_STATE_VERSION = 7
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
@@ -92,7 +94,7 @@ with st.expander("What this app does", expanded=False):
         """
         1. Validates and maps submitted targets with STRING.
         2. Retrieves a STRING protein–protein interaction (PPI) network at your chosen confidence threshold.
-        3. Calculates Degree, Betweenness, Closeness and Eigenvector centrality and identifies 4/4 consensus hubs.
+        3. Calculates Degree, Betweenness, Closeness and Eigenvector centrality in R/igraph and identifies 4/4 consensus hubs.
         4. Provides Quick STRING enrichment plus a validated Publication Enrichment workflow using clusterProfiler and ReactomePA.
         5. Reduces redundant GO terms with Wang semantic similarity and Reactome pathways with Jaccard similarity.
         6. Exports raw tables, non-redundant tables, high-resolution PNG/PDF/SVG figures and reproducibility metadata.
@@ -220,9 +222,58 @@ if run:
             st.stop()
 
     graph = build_graph(network)
-    centrality = centrality_table(graph)
-    consensus_ranked, hubs, effective_top_n = consensus_hub_analysis(centrality, top_n)
     connected_targets, isolated_targets = connected_and_isolated_targets(mapping, graph)
+
+    if network.empty:
+        centrality = pd.DataFrame()
+        consensus_ranked = pd.DataFrame()
+        hubs = pd.DataFrame()
+        effective_top_n = 0
+        centrality_provenance = {
+            "centrality_engine": "R/igraph",
+            "nodes": 0,
+            "edges": 0,
+        }
+    else:
+        centrality_status = st.status(
+            "Submitting centrality analysis to R/igraph…",
+            expanded=True,
+        )
+
+        def centrality_status_update(message: str) -> None:
+            centrality_status.write(message)
+
+        try:
+            (
+                centrality,
+                consensus_ranked,
+                hubs,
+                effective_top_n,
+                centrality_provenance,
+            ) = run_r_igraph_centrality(
+                mapping=mapping,
+                network=network,
+                taxon_id=species,
+                required_score=score_label,
+                network_type=network_type,
+                string_version=string_version,
+                top_n=top_n,
+                status_callback=centrality_status_update,
+            )
+        except CentralityGitHubError as exc:
+            centrality_status.update(
+                label="R/igraph centrality analysis failed",
+                state="error",
+                expanded=True,
+            )
+            st.error(str(exc))
+            st.stop()
+        else:
+            centrality_status.update(
+                label="R/igraph centrality analysis completed",
+                state="complete",
+                expanded=False,
+            )
 
     mapped_queries = set(mapping.get("queryItem", pd.Series(dtype=str)).astype(str).str.upper())
     unresolved = [g for g in targets if g.upper() not in mapped_queries]
@@ -241,6 +292,7 @@ if run:
         "connected_targets": connected_targets,
         "isolated_targets": isolated_targets,
         "effective_top_n": effective_top_n,
+        "centrality_provenance": centrality_provenance,
         "unresolved": unresolved,
         "settings": {
             "species": species_label,
@@ -271,6 +323,7 @@ if analysis:
     connected_targets = analysis["connected_targets"]
     isolated_targets = analysis["isolated_targets"]
     effective_top_n = analysis["effective_top_n"]
+    centrality_provenance = analysis.get("centrality_provenance", {})
     unresolved = analysis["unresolved"]
     settings = analysis["settings"]
     graph = build_graph(network)
@@ -280,7 +333,8 @@ if analysis:
     st.caption(
         f"STRING v{settings.get('string_version', '12.0')} · "
         f"{settings['network_type']} network · "
-        f"required score {settings['required_score']}/1000 · no added nodes"
+        f"required score {settings['required_score']}/1000 · no added nodes · "
+        "centrality: R/igraph"
     )
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Submitted", len(settings["submitted_targets"]))
@@ -421,7 +475,7 @@ if analysis:
         st.caption(
             "Primary hub definition: a gene must rank within the Top "
             f"{effective_top_n} connected targets for all four unweighted topology metrics "
-            "(Degree, Betweenness, Closeness and Eigenvector)."
+            "(Degree, Betweenness, Closeness and Eigenvector), calculated in R/igraph."
         )
 
         if centrality.empty:
@@ -498,11 +552,15 @@ if analysis:
                 use_container_width=True,
             )
 
+            engine = centrality_provenance.get("summary", {}).get("engine", {})
             st.info(
                 "STRING confidence is used here to decide which PPI edges are retained. "
-                "The four primary centrality measures are then calculated on the unweighted "
-                "filtered topology. A 4/4 hub is a network-topology consensus candidate, not "
-                "proof of causality or therapeutic importance."
+                "The four primary centrality measures are calculated in R/igraph on the "
+                "unweighted filtered topology. "
+                f"Engine: {engine.get('R', 'R 4.6.1')} · "
+                f"igraph {engine.get('igraph', '2.3.4')}. "
+                "A 4/4 hub is a network-topology consensus candidate, not proof of causality "
+                "or therapeutic importance."
             )
 
     with tab_enrich:
@@ -662,7 +720,9 @@ if analysis:
             f"STRING native figure style: {settings.get('network_flavor', 'evidence')}\n"
             f"Minimum STRING interaction score: {settings['required_score']}/1000\n"
             f"Enrichment significance threshold: FDR <= {settings['fdr_cutoff']}\n"
-            f"Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector centrality\n"
+            f"Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector centrality in R/igraph\n"
+            f"Centrality engine: {centrality_provenance.get('summary', {}).get('engine', {}).get('R', 'R 4.6.1')} / "
+            f"igraph {centrality_provenance.get('summary', {}).get('engine', {}).get('igraph', '2.3.4')}\n"
             f"Top N per centrality metric: {effective_top_n}\n"
             f"4/4 consensus hubs identified: {len(hubs)}\n\n"
             "STRING identifiers were mapped using get_string_ids. The PPI edge list was obtained "
@@ -670,17 +730,23 @@ if analysis:
             "network was also retrieved as a high-resolution PNG and SVG when available. The selected "
             "STRING confidence score was used only as the edge-retention threshold for primary hub "
             "analysis; it was not treated as biochemical interaction strength. Degree, betweenness, "
-            "closeness and eigenvector centrality were calculated on the resulting unweighted topology. "
-            "For each metric, the Top-N connected targets were selected, and targets present in all four "
-            "Top-N lists were designated 4/4 consensus hubs. Mapped targets with no retained PPI edge "
-            "were reported separately and excluded from topology-based ranking. Functional enrichment "
-            "was obtained from the STRING enrichment API and filtered by false discovery "
-            "rate (FDR).\n"
+            "closeness and eigenvector centrality were calculated in R using igraph on the resulting "
+            "unweighted topology. The GitHub Actions centrality job independently re-fetched the same "
+            "version-pinned STRING network and required an exact edge-set hash match before accepting "
+            "the R results. For each metric, the Top-N connected targets were selected, and targets "
+            "present in all four Top-N lists were designated 4/4 consensus hubs. Mapped targets with "
+            "no retained PPI edge were reported separately and excluded from topology-based ranking. "
+            "Functional enrichment was obtained from the STRING enrichment API and filtered by false "
+            "discovery rate (FDR).\n"
         )
         if publication_matches_current:
             methods += "\n\n" + publication_methods_text(publication_result.summary)
 
         files["settings.json"] = json.dumps(settings, indent=2).encode("utf-8")
+        files["centrality_provenance.json"] = json.dumps(
+            centrality_provenance,
+            indent=2,
+        ).encode("utf-8")
         zip_bytes = build_results_zip(files, methods)
         st.download_button(
             "Download complete results ZIP",
