@@ -3,11 +3,14 @@ from __future__ import annotations
 import networkx as nx
 import pandas as pd
 
-PRIMARY_METRICS = ["Degree", "Betweenness", "Closeness", "Eigenvector"]
-
 
 def build_graph(network: pd.DataFrame) -> nx.Graph:
-    """Build STRING PPI graph; confidence is metadata, not biological strength."""
+    """Build an unweighted graph for visualization only.
+
+    Centrality calculations are performed in R/igraph via GitHub Actions.
+    NetworkX is retained here only for local network rendering/layout and for
+    identifying which mapped targets have at least one retained PPI edge.
+    """
     graph = nx.Graph()
     if network.empty:
         return graph
@@ -21,100 +24,6 @@ def build_graph(network: pd.DataFrame) -> nx.Graph:
         graph.add_edge(a, b, string_confidence=score)
 
     return graph
-
-
-def centrality_table(graph: nx.Graph) -> pd.DataFrame:
-    """Four unweighted centralities used for the primary consensus workflow."""
-    if graph.number_of_nodes() == 0:
-        return pd.DataFrame()
-
-    degree = dict(graph.degree())
-    betweenness = nx.betweenness_centrality(graph, weight=None, normalized=True)
-    closeness = nx.closeness_centrality(graph)
-
-    try:
-        eigenvector = nx.eigenvector_centrality(
-            graph,
-            max_iter=5000,
-            tol=1e-10,
-            weight=None,
-        )
-    except (nx.PowerIterationFailedConvergence, nx.NetworkXException):
-        eigenvector = {node: float("nan") for node in graph.nodes}
-
-    # Match igraph::evcent(..., scale=TRUE): maximum absolute score is 1.
-    finite_eigen = [abs(v) for v in eigenvector.values() if pd.notna(v)]
-    max_eigen = max(finite_eigen, default=0.0)
-    if max_eigen > 0:
-        eigenvector = {node: value / max_eigen for node, value in eigenvector.items()}
-
-    df = pd.DataFrame(
-        {
-            "Gene": list(graph.nodes),
-            "Degree": [degree[n] for n in graph.nodes],
-            "Betweenness": [betweenness[n] for n in graph.nodes],
-            "Closeness": [closeness[n] for n in graph.nodes],
-            "Eigenvector": [eigenvector[n] for n in graph.nodes],
-        }
-    )
-
-    for metric in PRIMARY_METRICS:
-        df[f"{metric} rank"] = (
-            df[metric]
-            .rank(method="min", ascending=False, na_option="bottom")
-            .astype(int)
-        )
-
-    return (
-        df.sort_values(
-            ["Degree", "Betweenness", "Closeness", "Eigenvector", "Gene"],
-            ascending=[False, False, False, False, True],
-        )
-        .reset_index(drop=True)
-    )
-
-
-def consensus_hub_analysis(
-    centrality: pd.DataFrame,
-    top_n: int = 10,
-) -> tuple[pd.DataFrame, pd.DataFrame, int]:
-    if centrality.empty:
-        return pd.DataFrame(), pd.DataFrame(), 0
-
-    effective_top_n = min(int(top_n), len(centrality))
-    out = centrality.copy()
-    membership_columns = []
-
-    for metric in PRIMARY_METRICS:
-        selected = set(
-            out.sort_values(
-                [metric, "Gene"],
-                ascending=[False, True],
-                na_position="last",
-            )
-            .head(effective_top_n)["Gene"]
-            .tolist()
-        )
-        col = f"Top {effective_top_n} {metric}"
-        out[col] = out["Gene"].isin(selected)
-        membership_columns.append(col)
-
-    out["Consensus count"] = out[membership_columns].sum(axis=1).astype(int)
-    out["Consensus"] = out["Consensus count"].astype(str) + "/4"
-    out["4/4 consensus hub"] = out["Consensus count"] == 4
-
-    rank_cols = [f"{m} rank" for m in PRIMARY_METRICS]
-    out["Mean rank"] = out[rank_cols].mean(axis=1)
-
-    out = (
-        out.sort_values(
-            ["Consensus count", "Mean rank", "Degree rank", "Gene"],
-            ascending=[False, True, True, True],
-        )
-        .reset_index(drop=True)
-    )
-    hubs = out[out["4/4 consensus hub"]].copy().reset_index(drop=True)
-    return out, hubs, effective_top_n
 
 
 def connected_and_isolated_targets(
