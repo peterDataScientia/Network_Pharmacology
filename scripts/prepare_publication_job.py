@@ -91,12 +91,14 @@ def main() -> None:
     )
 
     background_arg = "NONE"
+    background_docker_arg = "NONE"
     if background_mode == "custom":
         (root / "custom_background_symbols.txt").write_text(
             "\n".join(custom_background) + "\n",
             encoding="utf-8",
         )
-        background_arg = "/job_input/custom_background_symbols.txt"
+        background_arg = "job_input/custom_background_symbols.txt"
+        background_docker_arg = "/job_input/custom_background_symbols.txt"
 
     settings_path = root / "analysis_settings.json"
     settings_path.write_text(
@@ -124,6 +126,7 @@ def main() -> None:
             fh.write(f"organism={organism}\n")
             fh.write(f"background_mode={background_mode}\n")
             fh.write(f"background_arg={background_arg}\n")
+            fh.write(f"background_docker_arg={background_docker_arg}\n")
             fh.write(f"request_id={request_id}\n")
             fh.write("settings_path=job_input/analysis_settings.json\n")
             fh.write("settings_docker_path=/job_input/analysis_settings.json\n")
