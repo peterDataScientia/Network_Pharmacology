@@ -374,9 +374,17 @@ reduce_reactome <- function(df) {
     clusters <- 1L
   } else {
     hc <- hclust(as.dist(1 - sim), method = "average")
+    # Preserve exact boundary semantics from the validated reference workflow.
+    # Direct subtraction can produce e.g. 1 - 0.70 = 0.30000000000000004,
+    # which can merge a cluster exactly at distance 0.30 that the historical
+    # literal h = 0.30 kept separate.
+    cluster_height <- round(
+      1 - analysis_settings$reactome_jaccard_cutoff,
+      digits = 12
+    )
     clusters <- cutree(
       hc,
-      h = 1 - analysis_settings$reactome_jaccard_cutoff
+      h = cluster_height
     )
   }
 
