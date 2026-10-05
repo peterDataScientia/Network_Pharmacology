@@ -144,6 +144,28 @@ AKT1, BCL2L1, CASP3, STAT3 and TP53 before a newly built centrality image is pub
 The lightweight image is built and checked by
 `.github/workflows/build-centrality-image.yml`.
 
+### Extensible cached R runtime
+
+A native GitHub Actions R runtime is maintained in parallel with the current
+containerized production executor. Its dependencies are declared in the repository
+root `DESCRIPTION` file and installed/restored with `r-lib/actions`. This keeps the
+runtime open to future packages: adding a new analysis package means declaring it in
+`DESCRIPTION`, after which the dependency cache is invalidated automatically and the
+new environment is rebuilt and revalidated.
+
+The generic runtime verifier, `scripts/verify_publication_r_runtime.R`, reads the
+manifest rather than a hard-coded package list, so newly declared packages are checked
+without editing the workflow logic. The generic worker is
+`.github/workflows/publication-enrichment-native-job.yml`; the regression workflow
+`.github/workflows/validate-native-publication-runtime.yml` uses the frozen 32-gene
+reference only as a deployment gate. The production enrichment algorithm itself
+remains input-agnostic and supports arbitrary target lists, supported organisms and
+background modes.
+
+This native worker is promoted to production only after it reproduces the validated
+publication outputs and demonstrates a useful warm-cache speed advantage over the
+container path.
+
 ### Reproducibility
 
 The R engine records R, clusterProfiler, ReactomePA, AnnotationDbi, GOSemSim and organism annotation-package versions in `summary.json`.
