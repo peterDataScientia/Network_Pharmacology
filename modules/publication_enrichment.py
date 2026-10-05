@@ -11,6 +11,11 @@ from typing import Callable
 
 import pandas as pd
 
+from modules.publication_settings import (
+    PublicationSettingsError,
+    normalize_publication_analysis_settings,
+)
+
 from modules.publication_github import (
     GitHubPublicationError,
     github_actions_configured,
@@ -188,6 +193,7 @@ def run_publication_enrichment(
     taxon_id: int,
     background_mode: str,
     custom_background: list[str] | None = None,
+    analysis_settings: dict | None = None,
     workdir: str | Path | None = None,
     auto_install: bool = True,
     status_callback: Callable[[str], None] | None = None,
@@ -199,6 +205,11 @@ def run_publication_enrichment(
       - annotated: all Entrez IDs represented in the selected organism OrgDb
       - custom: user-supplied gene symbols
     """
+    try:
+        analysis_settings = normalize_publication_analysis_settings(analysis_settings)
+    except PublicationSettingsError as exc:
+        raise PublicationEnrichmentError(str(exc)) from exc
+
     if taxon_id not in ORGANISM_CODE:
         raise PublicationEnrichmentError(
             "Publication enrichment currently supports human, mouse and rat."
@@ -232,6 +243,7 @@ def run_publication_enrichment(
                 taxon_id=taxon_id,
                 background_mode=background_mode,
                 custom_background=custom_background,
+                analysis_settings=analysis_settings,
                 status_callback=status_callback,
             )
         except GitHubPublicationError as exc:
@@ -277,6 +289,12 @@ def run_publication_enrichment(
     else:
         background_arg = "NONE"
 
+    settings_file = outdir / "analysis_settings.json"
+    settings_file.write_text(
+        json.dumps(analysis_settings, indent=2),
+        encoding="utf-8",
+    )
+
     cmd = [
         "Rscript",
         str(r_script),
@@ -285,6 +303,7 @@ def run_publication_enrichment(
         ORGANISM_CODE[taxon_id],
         background_mode,
         background_arg,
+        str(settings_file),
     ]
 
     try:
@@ -316,6 +335,10 @@ def run_publication_enrichment(
 
     table_files = {
         "mapping_foreground": "mapping_foreground.csv",
+        "go_bp_all": "go_bp_all_tested.csv",
+        "go_cc_all": "go_cc_all_tested.csv",
+        "go_mf_all": "go_mf_all_tested.csv",
+        "reactome_all": "reactome_all_tested.csv",
         "unmapped_foreground": "unmapped_foreground.csv",
         "go_bp_raw": "go_bp_raw_significant.csv",
         "go_bp_reduced": "go_bp_reduced.csv",
