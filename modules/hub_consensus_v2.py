@@ -5,23 +5,49 @@ import pandas as pd
 
 
 def build_graph(network: pd.DataFrame) -> nx.Graph:
-    """Build an unweighted graph for visualization only.
+    """Build an unweighted graph for visualization and connectivity checks.
 
-    Centrality calculations are performed in R/igraph via GitHub Actions.
-    NetworkX is retained here only for local network rendering/layout and for
-    identifying which mapped targets have at least one retained PPI edge.
+    Regulatory STRING output is represented as a directed graph. Functional and
+    physical networks remain undirected. Centrality calculations are performed
+    in R/igraph for the validated undirected workflow.
     """
-    graph = nx.Graph()
     if network.empty:
-        return graph
+        return nx.Graph()
+
+    regulatory = {
+        "source_preferred_name",
+        "target_preferred_name",
+    }.issubset(network.columns)
+    graph: nx.Graph = nx.DiGraph() if regulatory else nx.Graph()
 
     for _, row in network.iterrows():
-        a = str(row.get("preferredName_A", row.get("stringId_A", ""))).strip()
-        b = str(row.get("preferredName_B", row.get("stringId_B", ""))).strip()
+        a = str(
+            row.get(
+                "preferredName_A",
+                row.get("source_preferred_name", row.get("stringId_A", "")),
+            )
+        ).strip()
+        b = str(
+            row.get(
+                "preferredName_B",
+                row.get("target_preferred_name", row.get("stringId_B", "")),
+            )
+        ).strip()
         if not a or not b:
             continue
-        score = float(row.get("score", 0.0) or 0.0)
-        graph.add_edge(a, b, string_confidence=score)
+
+        score = float(
+            row.get(
+                "analysis_score",
+                row.get("score", row.get("combined_score", 0.0)),
+            )
+            or 0.0
+        )
+        attrs = {"string_confidence": score}
+        sign = str(row.get("sign", "")).strip()
+        if sign:
+            attrs["sign"] = sign
+        graph.add_edge(a, b, **attrs)
 
     return graph
 

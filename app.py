@@ -23,10 +23,12 @@ from modules.publication_ui import (
     render_publication_enrichment,
 )
 from modules.string_api import StringAPIError, run_string_workflow
+from modules.string_filters import SOURCE_LABELS
+from modules.string_settings_ui import render_string_settings
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 7
+APP_STATE_VERSION = 8
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
@@ -106,50 +108,9 @@ with st.expander("What this app does", expanded=False):
     )
 
 with st.sidebar:
+    string_options = render_string_settings(st)
+    st.divider()
     st.header("Analysis settings")
-    species_label = st.selectbox("Organism", list(SPECIES), index=0)
-    species = SPECIES[species_label]
-
-    string_version_label = st.selectbox(
-        "STRING database version",
-        [
-            "v12.0 — manuscript/reproducibility",
-            "v12.5 — newer/current pinned release",
-        ],
-        index=0,
-        help=(
-            "Network topology can change between STRING releases even with identical genes "
-            "and the same confidence threshold. Use v12.0 to reproduce the validated EGCG/RISI "
-            "reference workflow; use v12.5 for a newer pinned STRING network."
-        ),
-    )
-    string_version = "12.0" if string_version_label.startswith("v12.0") else "12.5"
-
-    network_type = st.selectbox("STRING network type", ["functional", "physical"], index=0)
-    flavor_options = ["evidence", "confidence", "actions"]
-    if network_type == "functional":
-        flavor_options.append("typed")
-    network_flavor = st.selectbox(
-        "STRING native figure style",
-        flavor_options,
-        index=0,
-        help=(
-            "Evidence shows evidence-channel edge colors; confidence emphasizes combined "
-            "interaction confidence; actions shows predicted molecular actions; typed is "
-            "available for functional networks."
-        ),
-    )
-    score_label = st.select_slider(
-        "Minimum STRING interaction score",
-        options=[150, 400, 700, 900],
-        value=900,
-        format_func=lambda x: {
-            150: "Low (0.15)",
-            400: "Medium (0.40)",
-            700: "High (0.70)",
-            900: "Highest (0.90)",
-        }[x],
-    )
     fdr_cutoff = st.select_slider(
         "Quick STRING enrichment FDR cutoff",
         options=[0.001, 0.01, 0.05, 0.10],
@@ -161,11 +122,20 @@ with st.sidebar:
         30,
         10,
         help=(
-            "The app takes the Top N genes from Degree, Betweenness, Closeness and "
-            "Eigenvector centrality. Genes present in all four lists are 4/4 consensus hubs."
+            "For functional/physical networks, the app takes the Top N genes from "
+            "Degree, Betweenness, Closeness and Eigenvector centrality. The existing "
+            "4/4 consensus workflow is not applied to directed regulatory networks."
         ),
     )
     enrichment_top_n = st.slider("Terms per enrichment plot", 5, 25, 15)
+
+species_label = string_options["species_label"]
+species = string_options["species"]
+string_version = string_options["string_version"]
+network_type = string_options["network_type"]
+network_flavor = string_options["network_flavor"]
+active_sources = string_options["active_sources"]
+score_label = string_options["required_score"]
 
 left, right = st.columns([1.3, 1])
 with left:
@@ -197,9 +167,44 @@ st.write(f"**Detected targets:** {len(targets)}")
 if targets:
     st.caption(", ".join(targets[:30]) + (" …" if len(targets) > 30 else ""))
 
-run = st.button("Run complete analysis", type="primary", use_container_width=True)
+previous_analysis = st.session_state.get("analysis")
+current_signature = {
+    "submitted_targets": list(targets),
+    "taxon_id": species,
+    "string_version": string_version,
+    "network_type": network_type,
+    "network_flavor": network_flavor,
+    "active_sources": list(active_sources),
+    "required_score": score_label,
+    "first_shell": string_options["first_shell"],
+    "second_shell": string_options["second_shell"],
+    "typed_physical_edges": string_options["typed_physical_edges"],
+    "typed_regulatory_edges": string_options["typed_regulatory_edges"],
+    "show_regulatory_signs": string_options["show_regulatory_signs"],
+    "fdr_cutoff": fdr_cutoff,
+    "top_n": top_n,
+    "enrichment_top_n": enrichment_top_n,
+}
+settings_changed = False
+if previous_analysis:
+    prior = previous_analysis.get("settings", {})
+    settings_changed = any(
+        prior.get(key) != value
+        for key, value in current_signature.items()
+    )
+    if settings_changed:
+        st.info(
+            "Settings or targets have changed. Results below still belong to the previous "
+            "run until you click **Update analysis**."
+        )
+
+run_label = "Update analysis" if previous_analysis else "Run complete analysis"
+run = st.button(run_label, type="primary", use_container_width=True)
 
 if run:
+    if not active_sources:
+        st.error("Select at least one active STRING interaction source.")
+        st.stop()
     if not targets:
         st.error("Please paste or upload at least one target.")
         st.stop()
@@ -215,6 +220,19 @@ if run:
                 score_label,
                 network_type,
                 network_flavor=network_flavor,
+                active_sources=active_sources,
+                first_shell=string_options["first_shell"],
+                second_shell=string_options["second_shell"],
+                typed_physical_edges=string_options["typed_physical_edges"],
+                typed_regulatory_edges=string_options["typed_regulatory_edges"],
+                show_regulatory_signs=string_options["show_regulatory_signs"],
+                bubble_3d=string_options["bubble_3d"],
+                block_structure_pics=string_options["block_structure_pics"],
+                center_node_labels=string_options["center_node_labels"],
+                show_query_node_labels=string_options["show_query_node_labels"],
+                hide_disconnected_nodes=string_options["hide_disconnected_nodes"],
+                hide_node_labels=string_options["hide_node_labels"],
+                label_font_size=string_options["label_font_size"],
                 string_version=string_version,
             )
         except StringAPIError as exc:
@@ -233,6 +251,20 @@ if run:
             "centrality_engine": "R/igraph",
             "nodes": 0,
             "edges": 0,
+        }
+    elif network_type == "regulatory":
+        centrality = pd.DataFrame()
+        consensus_ranked = pd.DataFrame()
+        hubs = pd.DataFrame()
+        effective_top_n = 0
+        centrality_provenance = {
+            "centrality_engine": "not-run",
+            "reason": (
+                "Directed regulatory STRING networks are shown and exported as directed "
+                "graphs; the validated undirected 4/4 consensus workflow is not applied."
+            ),
+            "nodes": graph.number_of_nodes(),
+            "edges": graph.number_of_edges(),
         }
     else:
         centrality_status = st.status(
@@ -258,6 +290,9 @@ if run:
                 network_type=network_type,
                 string_version=string_version,
                 top_n=top_n,
+                network_flavor=network_flavor,
+                active_sources=active_sources,
+                add_nodes=string_options["add_nodes"],
                 status_callback=centrality_status_update,
             )
         except CentralityGitHubError as exc:
@@ -298,9 +333,27 @@ if run:
             "species": species_label,
             "taxon_id": species,
             "network_type": network_type,
+            "network_type_label": string_options["network_type_label"],
             "network_flavor": network_flavor,
             "string_version": string_version,
             "required_score": score_label,
+            "active_sources": list(active_sources),
+            "evidence_transfer": True,
+            "first_shell": string_options["first_shell"],
+            "second_shell": string_options["second_shell"],
+            "add_nodes": string_options["add_nodes"],
+            "layout": string_options["layout"],
+            "colorblind_friendly": string_options["colorblind_friendly"],
+            "bubble_3d": string_options["bubble_3d"],
+            "block_structure_pics": string_options["block_structure_pics"],
+            "center_node_labels": string_options["center_node_labels"],
+            "show_query_node_labels": string_options["show_query_node_labels"],
+            "hide_disconnected_nodes": string_options["hide_disconnected_nodes"],
+            "hide_node_labels": string_options["hide_node_labels"],
+            "label_font_size": string_options["label_font_size"],
+            "typed_physical_edges": string_options["typed_physical_edges"],
+            "typed_regulatory_edges": string_options["typed_regulatory_edges"],
+            "show_regulatory_signs": string_options["show_regulatory_signs"],
             "fdr_cutoff": fdr_cutoff,
             "top_n": top_n,
             "enrichment_top_n": enrichment_top_n,
@@ -315,7 +368,7 @@ if analysis:
     enrichment = analysis["enrichment"]
     native_media = analysis.get(
         "native_media",
-        {"highres_png": None, "svg": None, "link": None, "errors": []},
+        {"highres_png": None, "svg": None, "link": None, "errors": [], "warnings": []},
     )
     centrality = analysis["centrality"]
     consensus_ranked = analysis["consensus_ranked"]
@@ -330,17 +383,30 @@ if analysis:
 
     st.divider()
     st.header("Results")
+    source_names = [
+        SOURCE_LABELS.get(source, source)
+        for source in settings.get("active_sources", [])
+    ]
+    centrality_label = (
+        "not applied to directed regulatory network"
+        if settings["network_type"] == "regulatory"
+        else "R/igraph"
+    )
     st.caption(
         f"STRING v{settings.get('string_version', '12.0')} · "
         f"{settings['network_type']} network · "
-        f"required score {settings['required_score']}/1000 · no added nodes · "
-        "centrality: R/igraph"
+        f"{settings.get('network_flavor', 'evidence')} edges · "
+        f"score ≥ {settings['required_score']/1000:.3f} · "
+        f"added interactors: {settings.get('add_nodes', 0)} · "
+        f"centrality: {centrality_label}"
     )
+    if source_names:
+        st.caption("Active evidence sources · " + " · ".join(source_names))
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Submitted", len(settings["submitted_targets"]))
     m2.metric("Mapped by STRING", len(mapping))
     m3.metric("Connected", len(connected_targets))
-    m4.metric("PPI edges", graph.number_of_edges())
+    m4.metric("Network edges", graph.number_of_edges())
     m5.metric("4/4 hubs", len(hubs))
 
     if unresolved:
@@ -351,7 +417,7 @@ if analysis:
         )
 
     tab_map, tab_net, tab_hub, tab_enrich, tab_export = st.tabs(
-        ["Target mapping", "PPI network", "Hub genes", "Enrichment", "Download package"]
+        ["Target mapping", "Network", "Hub genes", "Enrichment", "Download package"]
     )
 
     with tab_map:
@@ -374,10 +440,10 @@ if analysis:
         )
 
     with tab_net:
-        st.subheader("Protein–protein interaction network")
+        st.subheader("STRING interaction network")
         st.caption(
-            "The STRING-native figure is shown first. The second view is generated locally "
-            "to highlight the hub genes calculated by this app."
+            "The STRING-native rendering is shown first. The app-generated view uses the "
+            "selected evidence-source filter and your local layout/display settings."
         )
 
         native_tab, local_tab = st.tabs(
@@ -430,6 +496,9 @@ if analysis:
                     "The network data and local figure are still available."
                 )
 
+            if native_media.get("warnings"):
+                for warning in native_media["warnings"]:
+                    st.warning(warning)
             if native_media.get("errors"):
                 with st.expander("STRING media retrieval notes"):
                     for error in native_media["errors"]:
@@ -445,20 +514,30 @@ if analysis:
                 fig_net = network_figure(
                     graph,
                     set(hubs["Gene"]) if not hubs.empty else set(),
+                    layout=settings.get("layout", "force_directed"),
+                    show_labels=not settings.get("hide_node_labels", False),
+                    label_font_size=settings.get("label_font_size", 12),
+                    colorblind_friendly=settings.get("colorblind_friendly", True),
                 )
                 st.pyplot(fig_net, use_container_width=True)
                 render_downloads("consensus_hub_highlighted_ppi_network", fig_net)
                 plt.close(fig_net)
-                st.caption(
-                    "Green nodes are 4/4 consensus hubs (Top-N in Degree, Betweenness, "
-                    "Closeness and Eigenvector); blue nodes are other connected proteins. "
-                    "This is an app-generated figure, not STRING's native rendering."
-                )
+                if settings["network_type"] == "regulatory":
+                    st.caption(
+                        "Directed arrows represent STRING regulatory relationships. "
+                        "The validated undirected 4/4 hub workflow is not overlaid on this view."
+                    )
+                else:
+                    st.caption(
+                        "Highlighted nodes are 4/4 consensus hubs from the validated "
+                        "R/igraph workflow. This app-generated view follows the selected "
+                        "source filter and layout."
+                    )
 
         if network.empty:
             st.warning(
-                "No PPI edges passed the selected STRING score threshold. Try a lower "
-                "threshold or review the submitted targets."
+                "No interactions passed the selected STRING network settings. Try a lower "
+                "score threshold, enable additional evidence sources, or review the targets."
             )
         else:
             st.markdown("#### STRING interaction table")
@@ -472,15 +551,25 @@ if analysis:
 
     with tab_hub:
         st.subheader("Consensus hub-target analysis")
-        st.caption(
-            "Primary hub definition: a gene must rank within the Top "
-            f"{effective_top_n} connected targets for all four unweighted topology metrics "
-            "(Degree, Betweenness, Closeness and Eigenvector), calculated in R/igraph."
-        )
+        if settings["network_type"] == "regulatory":
+            st.info(
+                "This is a directed regulatory network. The existing 4/4 consensus method "
+                "was validated for undirected functional/physical topology, so the app does "
+                "not silently reuse it here. The directed network remains available in the "
+                "Network tab and downloads."
+            )
+        else:
+            st.caption(
+                "Primary hub definition: a gene must rank within the Top "
+                f"{effective_top_n} connected targets for all four unweighted topology metrics "
+                "(Degree, Betweenness, Closeness and Eigenvector), calculated in R/igraph."
+            )
 
-        if centrality.empty:
+        if settings["network_type"] == "regulatory":
+            pass
+        elif centrality.empty:
             st.warning(
-                "Centrality cannot be calculated because no PPI edges passed the selected threshold."
+                "Centrality cannot be calculated because no interactions passed the selected settings."
             )
         else:
             if len(centrality) <= effective_top_n:
@@ -657,9 +746,13 @@ if analysis:
             fig = network_figure(
                 graph,
                 set(hubs["Gene"]) if not hubs.empty else set(),
+                layout=settings.get("layout", "force_directed"),
+                show_labels=not settings.get("hide_node_labels", False),
+                label_font_size=settings.get("label_font_size", 12),
+                colorblind_friendly=settings.get("colorblind_friendly", True),
             )
             for fmt in ["png", "pdf", "svg"]:
-                files[f"figures/string_ppi_network.{fmt}"] = figure_bytes(fig, fmt)
+                files[f"figures/string_interaction_network.{fmt}"] = figure_bytes(fig, fmt)
             plt.close(fig)
 
         if not centrality.empty:
@@ -712,32 +805,68 @@ if analysis:
                 )
             )
 
+        if settings["network_type"] == "regulatory":
+            hub_method_line = (
+                "Hub analysis: not applied; directed regulatory network retained as directed topology\n"
+            )
+            engine_line = "Centrality engine: not run for regulatory network\n"
+            hub_prose = (
+                "Because this analysis used STRING's directed regulatory network, the existing "
+                "undirected 4/4 consensus-centrality workflow was not applied. Regulatory edges "
+                "and their directions were preserved in the network table and app-generated graph. "
+            )
+        else:
+            hub_method_line = (
+                "Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector "
+                "centrality in R/igraph\n"
+            )
+            engine = centrality_provenance.get("summary", {}).get("engine", {})
+            engine_line = (
+                f"Centrality engine: {engine.get('R', 'R 4.6.1')} / "
+                f"igraph {engine.get('igraph', '2.3.4')}\n"
+            )
+            hub_prose = (
+                "Degree, betweenness, closeness and eigenvector centrality were calculated "
+                "in R using igraph on the resulting unweighted topology. The GitHub Actions "
+                "centrality job independently re-fetched the same version-pinned STRING network, "
+                "applied the same evidence-source and neighborhood settings, and required an exact "
+                "edge-set hash match before accepting the R results. For each metric, the Top-N "
+                "connected targets were selected, and targets present in all four Top-N lists were "
+                "designated 4/4 consensus hubs. "
+            )
+
         methods = (
             "NETWORK PHARMACOLOGY / TOXICOLOGY ANALYSIS\n\n"
             f"Organism: {settings['species']} (NCBI taxon {settings['taxon_id']})\n"
             f"STRING version: {settings.get('string_version', '12.0')}\n"
             f"STRING network type: {settings['network_type']}\n"
-            f"STRING native figure style: {settings.get('network_flavor', 'evidence')}\n"
+            f"STRING edge meaning: {settings.get('network_flavor', 'evidence')}\n"
+            f"Active evidence sources: {', '.join(source_names) if source_names else 'none'}\n"
+            f"Evidence transfer: included (public API does not separate direct/transferred channel scores)\n"
             f"Minimum STRING interaction score: {settings['required_score']}/1000\n"
+            f"Added interactors: first shell {settings.get('first_shell', 0)}, "
+            f"second shell {settings.get('second_shell', 0)} "
+            f"(tabular API total add_nodes={settings.get('add_nodes', 0)})\n"
+            f"Local network layout: {settings.get('layout', 'force_directed')}\n"
             f"Enrichment significance threshold: FDR <= {settings['fdr_cutoff']}\n"
-            f"Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector centrality in R/igraph\n"
-            f"Centrality engine: {centrality_provenance.get('summary', {}).get('engine', {}).get('R', 'R 4.6.1')} / "
-            f"igraph {centrality_provenance.get('summary', {}).get('engine', {}).get('igraph', '2.3.4')}\n"
-            f"Top N per centrality metric: {effective_top_n}\n"
-            f"4/4 consensus hubs identified: {len(hubs)}\n\n"
-            "STRING identifiers were mapped using get_string_ids. The PPI edge list was obtained "
-            "from the STRING network API with no added neighbor nodes. The official STRING-native "
-            "network was also retrieved as a high-resolution PNG and SVG when available. The selected "
-            "STRING confidence score was used only as the edge-retention threshold for primary hub "
-            "analysis; it was not treated as biochemical interaction strength. Degree, betweenness, "
-            "closeness and eigenvector centrality were calculated in R using igraph on the resulting "
-            "unweighted topology. The GitHub Actions centrality job independently re-fetched the same "
-            "version-pinned STRING network and required an exact edge-set hash match before accepting "
-            "the R results. For each metric, the Top-N connected targets were selected, and targets "
-            "present in all four Top-N lists were designated 4/4 consensus hubs. Mapped targets with "
-            "no retained PPI edge were reported separately and excluded from topology-based ranking. "
-            "Functional enrichment was obtained from the STRING enrichment API and filtered by false "
-            "discovery rate (FDR).\n"
+            + hub_method_line
+            + engine_line
+            + f"Top N per centrality metric: {effective_top_n}\n"
+            + f"4/4 consensus hubs identified: {len(hubs)}\n\n"
+            + "STRING identifiers were mapped using get_string_ids. Network interactions were "
+            "retrieved from the version-pinned STRING network API using the selected network type, "
+            "score threshold and neighborhood size. When the user disabled evidence channels, "
+            "the retained edge score was recomputed from the selected STRING channel scores using "
+            "STRING's documented prior-corrected probabilistic combination rule, and edges below "
+            "the requested confidence threshold were removed. STRING's public image/link API does "
+            "not expose evidence-channel filtering, so when a subset of channels was selected the "
+            "app-generated network is the authoritative filtered topology and the native STRING "
+            "image is presented with that limitation. STRING confidence represents evidence support, "
+            "not biochemical interaction strength or binding affinity. "
+            + hub_prose
+            + "Mapped query targets with no retained interaction were reported separately. "
+            "Functional enrichment was obtained from the STRING enrichment API and filtered by "
+            "false discovery rate (FDR).\n"
         )
         if publication_matches_current:
             methods += "\n\n" + publication_methods_text(publication_result.summary)

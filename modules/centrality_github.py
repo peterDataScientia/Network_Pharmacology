@@ -92,6 +92,9 @@ def _encode_payload(
     taxon_id: int,
     required_score: int,
     network_type: str,
+    network_flavor: str,
+    active_sources: list[str],
+    add_nodes: int,
     string_version: str,
     top_n: int,
     expected_edge_hash: str,
@@ -104,6 +107,9 @@ def _encode_payload(
         "taxon_id": int(taxon_id),
         "required_score": int(required_score),
         "network_type": str(network_type),
+        "network_flavor": str(network_flavor),
+        "active_sources": list(dict.fromkeys(str(x) for x in active_sources)),
+        "add_nodes": max(0, int(add_nodes)),
         "string_version": str(string_version),
         "top_n": int(top_n),
         "expected_edge_hash": str(expected_edge_hash),
@@ -321,8 +327,17 @@ def run_r_igraph_centrality(
     network_type: str,
     string_version: str,
     top_n: int,
+    network_flavor: str = "evidence",
+    active_sources: list[str] | None = None,
+    add_nodes: int = 0,
     status_callback: Callable[[str], None] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int, dict]:
+    if network_type == "regulatory":
+        raise CentralityGitHubError(
+            "The validated 4/4 consensus hub workflow is undirected and is not "
+            "applied to STRING regulatory networks."
+        )
+
     if network.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), 0, {
             "executor": "github-actions",
@@ -349,6 +364,9 @@ def run_r_igraph_centrality(
         taxon_id=taxon_id,
         required_score=required_score,
         network_type=network_type,
+        network_flavor=network_flavor,
+        active_sources=active_sources or [],
+        add_nodes=add_nodes,
         string_version=string_version,
         top_n=top_n,
         expected_edge_hash=edge_hash,

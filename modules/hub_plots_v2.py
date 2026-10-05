@@ -7,28 +7,64 @@ import pandas as pd
 FIGSIZE = (6.66, 3.90)
 
 
-def network_figure(graph: nx.Graph, hubs: set[str] | None = None):
+def network_figure(
+    graph: nx.Graph,
+    hubs: set[str] | None = None,
+    *,
+    layout: str = "force_directed",
+    show_labels: bool = True,
+    label_font_size: int | None = None,
+    colorblind_friendly: bool = True,
+):
     hubs = hubs or set()
     fig, ax = plt.subplots(figsize=FIGSIZE, dpi=150)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
     if graph.number_of_nodes() == 0:
-        ax.text(0.5, 0.5, "No interactions passed the selected threshold.", ha="center", va="center")
+        ax.text(
+            0.5,
+            0.5,
+            "No interactions passed the selected settings.",
+            ha="center",
+            va="center",
+        )
         ax.axis("off")
         return fig
 
-    pos = nx.spring_layout(graph, seed=42, weight=None)
+    if layout == "circular":
+        pos = nx.circular_layout(graph)
+    else:
+        pos = nx.spring_layout(graph, seed=42, weight=None)
+
     degree = dict(graph.degree())
     sizes = [90 + 30 * degree[n] for n in graph.nodes]
-    node_colors = ["#2E9B4D" if n in hubs else "#4D7FB8" for n in graph.nodes]
+
+    if colorblind_friendly:
+        hub_color = "#0072B2"
+        other_color = "#B8B8B8"
+        edge_color = "#5F6368"
+    else:
+        hub_color = "#2E9B4D"
+        other_color = "#4D7FB8"
+        edge_color = "#7C8793"
+
+    node_colors = [hub_color if n in hubs else other_color for n in graph.nodes]
     widths = [
         0.55 + 1.6 * float(graph[u][v].get("string_confidence", 0.0) or 0.0)
         for u, v in graph.edges
     ]
 
     nx.draw_networkx_edges(
-        graph, pos, width=widths, alpha=0.35, edge_color="#7C8793", ax=ax
+        graph,
+        pos,
+        width=widths,
+        alpha=0.42,
+        edge_color=edge_color,
+        arrows=graph.is_directed(),
+        arrowsize=12 if graph.is_directed() else 10,
+        connectionstyle="arc3,rad=0.05" if graph.is_directed() else "arc3",
+        ax=ax,
     )
     nx.draw_networkx_nodes(
         graph,
@@ -40,11 +76,26 @@ def network_figure(graph: nx.Graph, hubs: set[str] | None = None):
         alpha=0.95,
         ax=ax,
     )
-    label_size = 7 if graph.number_of_nodes() <= 40 else 5
-    nx.draw_networkx_labels(
-        graph, pos, font_size=label_size, font_weight="bold", ax=ax
+
+    if show_labels:
+        if label_font_size is None:
+            label_size = 7 if graph.number_of_nodes() <= 40 else 5
+        else:
+            label_size = max(5, min(int(label_font_size), 50))
+        nx.draw_networkx_labels(
+            graph,
+            pos,
+            font_size=label_size,
+            font_weight="bold",
+            ax=ax,
+        )
+
+    title = (
+        "STRING regulatory network"
+        if graph.is_directed()
+        else "STRING PPI with 4/4 consensus hubs"
     )
-    ax.set_title("STRING PPI with 4/4 consensus hubs", fontsize=11, fontweight="bold")
+    ax.set_title(title, fontsize=11, fontweight="bold")
     ax.axis("off")
     fig.tight_layout()
     return fig
@@ -81,7 +132,12 @@ def consensus_centrality_figure(ranked: pd.DataFrame, top_n: int):
         ax.barh(data["Gene"], data[metric], color=colors)
         ax.set_xlabel(metric, fontsize=9, fontweight="bold")
         ax.set_ylabel("")
-        ax.set_title(f"({chr(65 + idx)}) {metric}", fontsize=10, fontweight="bold", loc="left")
+        ax.set_title(
+            f"({chr(65 + idx)}) {metric}",
+            fontsize=10,
+            fontweight="bold",
+            loc="left",
+        )
         ax.tick_params(
             axis="both",
             labelsize=8,
