@@ -522,7 +522,7 @@ if analysis:
         if settings["network_type"] == "regulatory":
             st.info(
                 "This is a directed regulatory network. The existing 4/4 consensus method "
-                "was validated for undirected functional/physical topology, so PanDoc does "
+                "was validated for undirected functional/physical topology, so the app does "
                 "not silently reuse it here. The directed network remains available in the "
                 "Network tab and downloads."
             )
@@ -720,7 +720,7 @@ if analysis:
                 colorblind_friendly=settings.get("colorblind_friendly", True),
             )
             for fmt in ["png", "pdf", "svg"]:
-                files[f"figures/string_ppi_network.{fmt}"] = figure_bytes(fig, fmt)
+                files[f"figures/string_interaction_network.{fmt}"] = figure_bytes(fig, fmt)
             plt.close(fig)
 
         if not centrality.empty:
@@ -773,32 +773,68 @@ if analysis:
                 )
             )
 
+        if settings["network_type"] == "regulatory":
+            hub_method_line = (
+                "Hub analysis: not applied; directed regulatory network retained as directed topology\n"
+            )
+            engine_line = "Centrality engine: not run for regulatory network\n"
+            hub_prose = (
+                "Because this analysis used STRING's directed regulatory network, the existing "
+                "undirected 4/4 consensus-centrality workflow was not applied. Regulatory edges "
+                "and their directions were preserved in the network table and app-generated graph. "
+            )
+        else:
+            hub_method_line = (
+                "Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector "
+                "centrality in R/igraph\n"
+            )
+            engine = centrality_provenance.get("summary", {}).get("engine", {})
+            engine_line = (
+                f"Centrality engine: {engine.get('R', 'R 4.6.1')} / "
+                f"igraph {engine.get('igraph', '2.3.4')}\n"
+            )
+            hub_prose = (
+                "Degree, betweenness, closeness and eigenvector centrality were calculated "
+                "in R using igraph on the resulting unweighted topology. The GitHub Actions "
+                "centrality job independently re-fetched the same version-pinned STRING network, "
+                "applied the same evidence-source and neighborhood settings, and required an exact "
+                "edge-set hash match before accepting the R results. For each metric, the Top-N "
+                "connected targets were selected, and targets present in all four Top-N lists were "
+                "designated 4/4 consensus hubs. "
+            )
+
         methods = (
             "NETWORK PHARMACOLOGY / TOXICOLOGY ANALYSIS\n\n"
             f"Organism: {settings['species']} (NCBI taxon {settings['taxon_id']})\n"
             f"STRING version: {settings.get('string_version', '12.0')}\n"
             f"STRING network type: {settings['network_type']}\n"
-            f"STRING native figure style: {settings.get('network_flavor', 'evidence')}\n"
+            f"STRING edge meaning: {settings.get('network_flavor', 'evidence')}\n"
+            f"Active evidence sources: {', '.join(source_names) if source_names else 'none'}\n"
+            f"Evidence transfer: included (public API does not separate direct/transferred channel scores)\n"
             f"Minimum STRING interaction score: {settings['required_score']}/1000\n"
+            f"Added interactors: first shell {settings.get('first_shell', 0)}, "
+            f"second shell {settings.get('second_shell', 0)} "
+            f"(tabular API total add_nodes={settings.get('add_nodes', 0)})\n"
+            f"Local network layout: {settings.get('layout', 'force_directed')}\n"
             f"Enrichment significance threshold: FDR <= {settings['fdr_cutoff']}\n"
-            f"Hub analysis: unweighted Degree, Betweenness, Closeness and Eigenvector centrality in R/igraph\n"
-            f"Centrality engine: {centrality_provenance.get('summary', {}).get('engine', {}).get('R', 'R 4.6.1')} / "
-            f"igraph {centrality_provenance.get('summary', {}).get('engine', {}).get('igraph', '2.3.4')}\n"
-            f"Top N per centrality metric: {effective_top_n}\n"
-            f"4/4 consensus hubs identified: {len(hubs)}\n\n"
-            "STRING identifiers were mapped using get_string_ids. The PPI edge list was obtained "
-            "from the STRING network API with no added neighbor nodes. The official STRING-native "
-            "network was also retrieved as a high-resolution PNG and SVG when available. The selected "
-            "STRING confidence score was used only as the edge-retention threshold for primary hub "
-            "analysis; it was not treated as biochemical interaction strength. Degree, betweenness, "
-            "closeness and eigenvector centrality were calculated in R using igraph on the resulting "
-            "unweighted topology. The GitHub Actions centrality job independently re-fetched the same "
-            "version-pinned STRING network and required an exact edge-set hash match before accepting "
-            "the R results. For each metric, the Top-N connected targets were selected, and targets "
-            "present in all four Top-N lists were designated 4/4 consensus hubs. Mapped targets with "
-            "no retained PPI edge were reported separately and excluded from topology-based ranking. "
-            "Functional enrichment was obtained from the STRING enrichment API and filtered by false "
-            "discovery rate (FDR).\n"
+            + hub_method_line
+            + engine_line
+            + f"Top N per centrality metric: {effective_top_n}\n"
+            + f"4/4 consensus hubs identified: {len(hubs)}\n\n"
+            + "STRING identifiers were mapped using get_string_ids. Network interactions were "
+            "retrieved from the version-pinned STRING network API using the selected network type, "
+            "score threshold and neighborhood size. When the user disabled evidence channels, "
+            "the retained edge score was recomputed from the selected STRING channel scores using "
+            "STRING's documented prior-corrected probabilistic combination rule, and edges below "
+            "the requested confidence threshold were removed. STRING's public image/link API does "
+            "not expose evidence-channel filtering, so when a subset of channels was selected the "
+            "app-generated network is the authoritative filtered topology and the native STRING "
+            "image is presented with that limitation. STRING confidence represents evidence support, "
+            "not biochemical interaction strength or binding affinity. "
+            + hub_prose
+            + "Mapped query targets with no retained interaction were reported separately. "
+            "Functional enrichment was obtained from the STRING enrichment API and filtered by "
+            "false discovery rate (FDR).\n"
         )
         if publication_matches_current:
             methods += "\n\n" + publication_methods_text(publication_result.summary)
