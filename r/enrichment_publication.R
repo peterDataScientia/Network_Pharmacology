@@ -33,6 +33,25 @@ if (!requireNamespace(org_pkg, quietly = TRUE)) {
 }
 OrgDb <- getExportedValue(org_pkg, org_pkg)
 
+
+semantic_cache_dir <- Sys.getenv("PUBLICATION_SEMDATA_DIR", "/app/semantic_cache")
+use_semantic_cache <- tolower(Sys.getenv("PUBLICATION_USE_SEMDATA_CACHE", "1")) %in%
+  c("1", "true", "yes", "on")
+
+semantic_cache_path <- function(ontology) {
+  file.path(
+    semantic_cache_dir,
+    paste0(organism, "_", tolower(ontology), ".rds")
+  )
+}
+
+get_semantic_data <- function(ontology) {
+  if (!use_semantic_cache) return(NULL)
+  path <- semantic_cache_path(ontology)
+  if (!file.exists(path)) return(NULL)
+  readRDS(path)
+}
+
 read_ids <- function(path) {
   x <- trimws(readLines(path, warn = FALSE))
   unique(x[nzchar(x)])
@@ -127,7 +146,7 @@ filter_sig <- function(df) {
   out
 }
 
-reduce_go <- function(obj, preselect_n = NULL) {
+reduce_go <- function(obj, ontology, preselect_n = NULL) {
   df <- filter_sig(safe_df(obj))
   if (nrow(df) == 0) return(df)
 
@@ -146,12 +165,15 @@ reduce_go <- function(obj, preselect_n = NULL) {
     drop = FALSE
   ]
 
+  semdata <- get_semantic_data(ontology)
+
   reduced <- clusterProfiler::simplify(
     subset_obj,
     cutoff = 0.70,
     by = "p.adjust",
     select_fun = min,
-    measure = "Wang"
+    measure = "Wang",
+    semData = semdata
   )
   out <- filter_sig(safe_df(reduced))
   if (nrow(out) > 0) out <- out[order(out$p.adjust, -out$Count), , drop = FALSE]
@@ -168,9 +190,9 @@ go_mf_raw <- filter_sig(safe_df(go_mf))
 
 # Mirrors the uploaded EGCG notebook: preselect the strongest 100 BP terms
 # before semantic simplification to control computational burden.
-go_bp_reduced <- reduce_go(go_bp, preselect_n = 100)
-go_cc_reduced <- reduce_go(go_cc)
-go_mf_reduced <- reduce_go(go_mf)
+go_bp_reduced <- reduce_go(go_bp, "BP", preselect_n = 100)
+go_cc_reduced <- reduce_go(go_cc, "CC")
+go_mf_reduced <- reduce_go(go_mf, "MF")
 
 reactome <- ReactomePA::enrichPathway(
   gene = foreground_ids,
@@ -255,6 +277,7 @@ summary <- list(
   background_entrez_count = if (is.null(background_ids)) NA_integer_ else length(background_ids),
   significance = "BH-adjusted P < 0.05",
   go_redundancy = "Wang semantic similarity; cutoff 0.70; representative=min p.adjust",
+  go_semantic_cache = if (use_semantic_cache) "precomputed when available" else "disabled",
   reactome_redundancy = "Jaccard gene-set similarity; cutoff 0.70; average-linkage h=0.30; representative=min p.adjust then max Count",
   counts = list(
     go_bp_raw = nrow(go_bp_raw),
