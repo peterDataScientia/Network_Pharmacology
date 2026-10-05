@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from modules.hub_consensus_v2 import build_display_graph, build_graph
 from modules.hub_plots_v2 import network_figure
+from modules.string_settings_ui import string_settings_signature
 
 
 def main() -> None:
@@ -85,6 +86,56 @@ def main() -> None:
             )
             assert fig is not None
             plt.close(fig)
+
+    options = {
+        "species": 9606,
+        "string_version": "12.0",
+        "network_type": "functional",
+        "network_flavor": "evidence",
+        "active_sources": [
+            "textmining",
+            "experiments",
+            "databases",
+            "coexpression",
+            "neighborhood",
+            "fusion",
+            "cooccurrence",
+        ],
+        "required_score": 900,
+        "first_shell": 0,
+        "second_shell": 0,
+        "layout": "force_directed",
+        "colorblind_friendly": True,
+        "bubble_3d": True,
+        "block_structure_pics": False,
+        "center_node_labels": False,
+        "show_query_node_labels": False,
+        "hide_disconnected_nodes": False,
+        "hide_node_labels": False,
+        "label_font_size": 12,
+        "typed_physical_edges": True,
+        "typed_regulatory_edges": True,
+        "show_regulatory_signs": True,
+    }
+    baseline = string_settings_signature(options)
+    advanced_changes = {
+        "layout": "circular",
+        "colorblind_friendly": False,
+        "bubble_3d": False,
+        "block_structure_pics": True,
+        "center_node_labels": True,
+        "show_query_node_labels": True,
+        "hide_disconnected_nodes": True,
+        "hide_node_labels": True,
+        "label_font_size": 18,
+        "typed_physical_edges": False,
+        "typed_regulatory_edges": False,
+        "show_regulatory_signs": False,
+    }
+    for key, changed_value in advanced_changes.items():
+        changed = dict(options)
+        changed[key] = changed_value
+        assert string_settings_signature(changed) != baseline, key
 
     print("STRING_DISPLAY_SETTINGS_OK")
 
