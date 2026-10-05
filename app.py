@@ -779,29 +779,15 @@ if analysis:
                 plt.close(fig)
 
         publication_result = st.session_state.get("publication_result")
-        publication_signature = st.session_state.get("publication_result_signature", {})
-        publication_matches_current = (
+        publication_matches_current = bool(
             publication_result is not None
-            and publication_signature.get("taxon_id") == settings["taxon_id"]
-            and publication_signature.get("foreground")
-            == list(
-                dict.fromkeys(
-                    str(x).strip()
-                    for x in settings.get("submitted_targets", [])
-                    if str(x).strip()
-                )
-            )
-            and publication_signature.get("background_label")
-            == st.session_state.get("publication_background_mode")
-            and publication_signature.get("source_type")
-            == st.session_state.get("publication_source_type")
+            and st.session_state.get("publication_result_current", False)
         )
         if publication_matches_current:
-            publication_top_n = int(st.session_state.get("publication_figure_top_n", 10))
             files.update(
                 publication_export_files(
                     publication_result,
-                    top_n_per_category=publication_top_n,
+                    figure_settings=st.session_state.get("publication_figure_settings"),
                 )
             )
 
