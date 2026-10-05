@@ -61,7 +61,8 @@ jobs:
             job_output \
             "${{ steps.prep.outputs.organism }}" \
             "${{ steps.prep.outputs.background_mode }}" \
-            "${{ steps.prep.outputs.background_arg }}"
+            "${{ steps.prep.outputs.background_arg }}" \
+            "${{ steps.prep.outputs.settings_path }}"
 
       - name: Validate versions and scientific output
         run: |
