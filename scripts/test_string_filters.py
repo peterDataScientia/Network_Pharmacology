@@ -12,7 +12,7 @@ from modules.string_filters import combine_channel_scores, filter_and_normalize_
 
 def main() -> None:
     combined = combine_channel_scores([0.621, 0.585])
-    assert 0.78 < combined < 0.82, combined
+    assert 0.835 < combined < 0.837, combined
 
     standard = [{
         "stringId_A": "9606.A",
