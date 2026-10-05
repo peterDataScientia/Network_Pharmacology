@@ -15,6 +15,7 @@ on:
       - "modules/string_filters.py"
       - "modules/string_settings_ui.py"
       - "scripts/test_string_filters.py"
+      - "scripts/test_string_settings_ui.py"
       - "scripts/prepare_publication_job.py"
       - "scripts/validate_publication_job.py"
       - "scripts/prepare_centrality_job.py"
@@ -35,6 +36,7 @@ on:
       - "modules/string_filters.py"
       - "modules/string_settings_ui.py"
       - "scripts/test_string_filters.py"
+      - "scripts/test_string_settings_ui.py"
       - "scripts/prepare_publication_job.py"
       - "scripts/validate_publication_job.py"
       - "scripts/prepare_centrality_job.py"
@@ -66,10 +68,17 @@ jobs:
             modules/string_filters.py \
             modules/string_settings_ui.py \
             scripts/test_string_filters.py \
+            scripts/test_string_settings_ui.py \
             scripts/prepare_publication_job.py \
             scripts/validate_publication_job.py \
             scripts/prepare_centrality_job.py \
             scripts/validate_centrality_job.py
 
+      - name: Install app dependencies for UI smoke test
+        run: pip install -r requirements.txt
+
       - name: Test STRING settings/filter logic
         run: python scripts/test_string_filters.py
+
+      - name: Smoke-test adjustable STRING Streamlit controls
+        run: python scripts/test_string_settings_ui.py
