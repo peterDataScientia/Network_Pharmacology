@@ -8,7 +8,7 @@ A free, browser-based Streamlit workflow for researchers who already have a list
 2. Map identifiers with STRING for the selected organism.
 3. Retrieve a functional or physical STRING PPI network at a user-selected confidence threshold, with no added neighbor nodes.
 4. Display and export STRING's native high-resolution network figure (PNG and SVG).
-5. Calculate four unweighted topology metrics on the connected filtered PPI: Degree, Betweenness, Closeness and Eigenvector centrality.
+5. Calculate four unweighted topology metrics in R/igraph on the connected filtered PPI: Degree, Betweenness, Closeness and Eigenvector centrality.
 6. Rank the Top N targets for each metric and designate targets present in all four Top-N lists as **4/4 consensus hubs**.
 7. Report mapped targets with no retained PPI edge separately rather than silently discarding them.
 8. Retrieve GO Biological Process, GO Molecular Function, GO Cellular Component, KEGG and Reactome enrichment.
@@ -35,7 +35,7 @@ Top N from each ranking
 Consensus hub targets
 ```
 
-STRING confidence is used as an **edge-retention confidence threshold**. It is not interpreted as biochemical interaction strength, binding affinity or effect magnitude. The primary centrality analysis is therefore unweighted after the confidence filter is applied.
+STRING confidence is used as an **edge-retention confidence threshold**. It is not interpreted as biochemical interaction strength, binding affinity or effect magnitude. The primary centrality analysis is therefore unweighted after the confidence filter is applied. Centrality is computed with R 4.6.1 and igraph 2.3.4 on a GitHub Actions runner; NetworkX is used only for local visualization/layout, not for centrality values or hub selection.
 
 The default STRING threshold is 0.90 (highest confidence), but users may select other supported thresholds. The default consensus cutoff is Top 10 per metric.
 
@@ -111,6 +111,32 @@ The prototype asks how the foreground was generated and supports three explicit 
 - **Custom study background** — preferred when an experimental/panel-specific universe is known.
 - **All annotated genes for organism** — explicit OrgDb Entrez universe; useful as a transparent general reference for database/prediction target lists.
 - **Package/default background** — retained for reproduction of older analyses, not presented as a universal best choice.
+
+### R/igraph network centrality
+
+The production centrality engine is `r/network_centrality.R`, executed by
+`.github/workflows/network-centrality-job.yml`. Streamlit sends the version-pinned
+STRING identifiers and network settings to GitHub Actions. The runner independently
+re-fetches the same STRING network and requires an exact canonical edge-set hash match
+with the network already shown in Streamlit before R is allowed to calculate
+centrality.
+
+The validated centrality environment is:
+
+- R 4.6.1
+- igraph 2.3.4
+- unweighted, undirected topology
+- Degree
+- normalized Betweenness
+- normalized Closeness
+- scaled Eigenvector centrality
+- deterministic Top-N selection with gene-symbol tie-breaking
+- 4/4 intersection for consensus hubs
+
+The frozen STRING v12.0 EGCG/RISI network (30 connected nodes, 90 edges) is used as
+an automated parity gate. The R/igraph output must reproduce the expected ordered
+Top-10 lists for all four metrics and the five reference hubs
+AKT1, BCL2L1, CASP3, STAT3 and TP53 before a newly built analysis image is published.
 
 ### Reproducibility
 
