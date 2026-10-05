@@ -115,11 +115,15 @@ The prototype asks how the foreground was generated and supports three explicit 
 ### R/igraph network centrality
 
 The production centrality engine is `r/network_centrality.R`, executed by
-`.github/workflows/network-centrality-job.yml`. Streamlit sends the version-pinned
-STRING identifiers and network settings to GitHub Actions. The runner independently
-re-fetches the same STRING network and requires an exact canonical edge-set hash match
-with the network already shown in Streamlit before R is allowed to calculate
-centrality.
+`.github/workflows/network-centrality-job.yml`. It uses a dedicated lightweight
+container built from `backend/centrality.Dockerfile` containing only the R runtime,
+igraph and the small supporting R dependency needed by the centrality script. It does
+not pull the much larger Bioconductor publication-enrichment image.
+
+Streamlit sends the version-pinned STRING identifiers and network settings to GitHub
+Actions. The runner independently re-fetches the same STRING network and requires an
+exact canonical edge-set hash match with the network already shown in Streamlit before
+R is allowed to calculate centrality.
 
 The validated centrality environment is:
 
@@ -136,7 +140,9 @@ The validated centrality environment is:
 The frozen STRING v12.0 EGCG/RISI network (30 connected nodes, 90 edges) is used as
 an automated parity gate. The R/igraph output must reproduce the expected ordered
 Top-10 lists for all four metrics and the five reference hubs
-AKT1, BCL2L1, CASP3, STAT3 and TP53 before a newly built analysis image is published.
+AKT1, BCL2L1, CASP3, STAT3 and TP53 before a newly built centrality image is published.
+The lightweight image is built and checked by
+`.github/workflows/build-centrality-image.yml`.
 
 ### Reproducibility
 
