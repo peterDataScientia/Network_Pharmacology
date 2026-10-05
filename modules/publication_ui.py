@@ -625,15 +625,18 @@ def render_publication_enrichment(
     result = st.session_state.get("publication_result")
     signature = st.session_state.get("publication_result_signature", {})
     if result is None:
+        st.session_state["publication_result_current"] = False
         return
 
     if signature != signature_now:
+        st.session_state["publication_result_current"] = False
         st.warning(
             "The controls above differ from the stored result. Results below are from the "
             "previous run. Use **Update publication enrichment** before interpreting or exporting them."
         )
         return
 
+    st.session_state["publication_result_current"] = True
     summary = result.summary
     tables = result.tables
     run_settings = summary.get("analysis_settings", analysis_settings)
