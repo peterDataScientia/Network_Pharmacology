@@ -56,8 +56,9 @@ jobs:
           docker run --rm \
             -v "$PWD/centrality_input:/centrality_input:ro" \
             -v "$PWD/centrality_output:/centrality_output" \
+            -v "$PWD/r/network_centrality.R:/analysis/network_centrality.R:ro" \
             "$IMAGE_NAME" \
-            Rscript /app/r/network_centrality.R \
+            Rscript /analysis/network_centrality.R \
               /centrality_input/network.tsv \
               /centrality_output \
               "${{ steps.prep.outputs.top_n }}"
