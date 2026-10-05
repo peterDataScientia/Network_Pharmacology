@@ -9,6 +9,7 @@ on:
       - "r/build_semantic_cache.R"
       - "modules/reference_validation.py"
       - "scripts/validate_publication_job.py"
+      - "scripts/compare_publication_outputs.py"
       - ".github/workflows/build-publication-image.yml"
   workflow_dispatch:
 
@@ -103,32 +104,11 @@ jobs:
               default \
               NONE
 
-      - name: Prove cached and uncached scientific outputs are identical
+      - name: Prove cached and uncached scientific outputs are equivalent
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          files = [
-              "mapping_foreground.csv",
-              "unmapped_foreground.csv",
-              "go_bp_raw_significant.csv",
-              "go_bp_reduced.csv",
-              "go_cc_raw_significant.csv",
-              "go_cc_reduced.csv",
-              "go_mf_raw_significant.csv",
-              "go_mf_reduced.csv",
-              "reactome_raw_significant.csv",
-              "reactome_reduced.csv",
-          ]
-
-          for name in files:
-              a = (Path("job_output_uncached") / name).read_bytes()
-              b = (Path("job_output_cached") / name).read_bytes()
-              if a != b:
-                  raise SystemExit(f"Cached semantic-data output differs from baseline: {name}")
-
-          print("SEMANTIC_CACHE_EXACT_OUTPUT_PARITY_OK")
-          PY
+          python scripts/compare_publication_outputs.py \
+            job_output_uncached \
+            job_output_cached
 
       - name: Validate exact publication reference
         run: |
