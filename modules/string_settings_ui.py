@@ -43,6 +43,39 @@ def _shell_control(st, label: str, key: str) -> int:
     return int(value)
 
 
+
+
+
+def string_settings_signature(options: dict) -> dict:
+    """Return every STRING setting that makes a stored result stale.
+
+    Keeping this in one place prevents new UI controls from being added without
+    participating in the app's Update-analysis state.
+    """
+    return {
+        "taxon_id": int(options["species"]),
+        "string_version": str(options["string_version"]),
+        "network_type": str(options["network_type"]),
+        "network_flavor": str(options["network_flavor"]),
+        "active_sources": list(options["active_sources"]),
+        "required_score": int(options["required_score"]),
+        "first_shell": int(options["first_shell"]),
+        "second_shell": int(options["second_shell"]),
+        "layout": str(options["layout"]),
+        "colorblind_friendly": bool(options["colorblind_friendly"]),
+        "bubble_3d": bool(options["bubble_3d"]),
+        "block_structure_pics": bool(options["block_structure_pics"]),
+        "center_node_labels": bool(options["center_node_labels"]),
+        "show_query_node_labels": bool(options["show_query_node_labels"]),
+        "hide_disconnected_nodes": bool(options["hide_disconnected_nodes"]),
+        "hide_node_labels": bool(options["hide_node_labels"]),
+        "label_font_size": int(options["label_font_size"]),
+        "typed_physical_edges": bool(options["typed_physical_edges"]),
+        "typed_regulatory_edges": bool(options["typed_regulatory_edges"]),
+        "show_regulatory_signs": bool(options["show_regulatory_signs"]),
+    }
+
+
 def render_string_settings(st) -> dict:
     st.header("STRING settings")
 
@@ -100,8 +133,9 @@ def render_string_settings(st) -> dict:
             flavor_options,
             index=0,
             help=(
-                "Evidence uses source-specific edge styling; confidence emphasizes data support. "
-                "Typed overlays physical and regulatory relationships on a functional network."
+                "Evidence and Confidence primarily change STRING's native edge rendering. "
+                "Typed also changes the returned functional-network schema by adding physical "
+                "and regulatory annotations."
             ),
         )
         network_flavor = network_flavor_label.lower()
@@ -114,6 +148,11 @@ def render_string_settings(st) -> dict:
             allowed_sources = REGULATORY_SOURCES
 
         st.markdown("**Active interaction sources**")
+        st.caption(
+            "These choices change the analyzed edge set. STRING's public native-image API "
+            "does not expose channel filtering, so a source-filtered native PNG/SVG may still "
+            "show additional all-source edges; the app-generated topology is authoritative."
+        )
         active_sources = []
         for source in allowed_sources:
             if st.checkbox(
@@ -171,34 +210,75 @@ def render_string_settings(st) -> dict:
         )
 
     with st.expander("Advanced Settings", expanded=False):
+        st.markdown("**App-generated network**")
         layout = st.radio(
             "Network layout",
             ["Force-directed", "Circular"],
             index=0,
             help=(
-                "This controls the app-generated editable network. STRING's public image API "
-                "does not expose its website layout switch."
+                "Applies to the app-generated topology view and exported local figure. "
+                "STRING's native image API does not expose the website layout switch."
             ),
         ).lower().replace("-", "_")
 
-        st.markdown("**Network display options**")
-        colorblind_friendly = st.checkbox("Colorblind-friendly edges", value=True)
-        bubble_3d = st.checkbox("Enable 3D bubble design", value=True)
-        block_structure_pics = st.checkbox(
-            "Disable structure previews inside network bubbles",
-            value=False,
+        colorblind_friendly = st.checkbox(
+            "Colorblind-friendly local network",
+            value=True,
+            help=(
+                "Applies to the app-generated network. STRING's public image API does not "
+                "document a colorblind-edge parameter."
+            ),
         )
-        center_node_labels = st.checkbox("Center protein names on nodes", value=False)
-        show_query_node_labels = st.checkbox("Show your query protein names", value=False)
-        hide_disconnected_nodes = st.checkbox("Hide disconnected nodes in the network", value=False)
-        hide_node_labels = st.checkbox("Hide protein names", value=False)
+
+        st.markdown("**Shared label/display controls**")
+        center_node_labels = st.checkbox(
+            "Center protein names on nodes",
+            value=False,
+            help="Applies to both the app-generated network and STRING native image.",
+        )
+        show_query_node_labels = st.checkbox(
+            "Use submitted names for query-node labels",
+            value=False,
+            help=(
+                "Requests STRING to retain the submitted query names where available. "
+                "This can change query-node labels in the returned table/native image; "
+                "it does not mean 'show only query nodes'."
+            ),
+        )
+        hide_disconnected_nodes = st.checkbox(
+            "Hide disconnected query nodes",
+            value=False,
+            help=(
+                "Applies to the STRING native image and the app-generated display. "
+                "It never changes centrality because isolated nodes are already excluded "
+                "from the retained-edge topology."
+            ),
+        )
+        hide_node_labels = st.checkbox(
+            "Hide protein names",
+            value=False,
+            help="Applies to both STRING native and app-generated network figures.",
+        )
         label_font_size = int(
             st.slider(
                 "Protein name font size",
                 min_value=5,
                 max_value=50,
                 value=12,
+                help="Applies to both STRING native and app-generated network figures.",
             )
+        )
+
+        st.markdown("**STRING native figure only**")
+        bubble_3d = st.checkbox(
+            "Enable 3D bubble design",
+            value=True,
+            help="STRING native PNG/SVG only; the local NetworkX view uses flat nodes.",
+        )
+        block_structure_pics = st.checkbox(
+            "Disable structure previews inside network bubbles",
+            value=False,
+            help="STRING native PNG/SVG only; the local graph has no structure previews.",
         )
 
         typed_physical_edges = True
@@ -206,12 +286,31 @@ def render_string_settings(st) -> dict:
         show_regulatory_signs = True
         if network_flavor == "typed":
             st.markdown("**Typed overlay visibility**")
-            typed_physical_edges = st.checkbox("Show physical overlay", value=True)
-            typed_regulatory_edges = st.checkbox("Show regulatory overlay", value=True)
+            typed_physical_edges = st.checkbox(
+                "Show physical overlay",
+                value=True,
+                help=(
+                    "Controls physical annotations in STRING's typed response/native figure. "
+                    "The app-generated graph remains a topology summary rather than an exact "
+                    "multi-layer STRING replica."
+                ),
+            )
+            typed_regulatory_edges = st.checkbox(
+                "Show regulatory overlay",
+                value=True,
+                help=(
+                    "Controls regulatory annotations in STRING's typed response/native figure. "
+                    "The app-generated graph remains a topology summary."
+                ),
+            )
         if network_type == "regulatory" or network_flavor == "typed":
             show_regulatory_signs = st.checkbox(
                 "Show positive/negative regulatory signs",
                 value=True,
+                help=(
+                    "Shown in STRING native output. The app-generated directed regulatory "
+                    "network also marks supported positive (+) and negative (−) effects."
+                ),
             )
 
     if not active_sources:

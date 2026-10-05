@@ -20,6 +20,8 @@ on:
       - "modules/string_settings_ui.py"
       - "scripts/test_string_filters.py"
       - "scripts/test_string_settings_ui.py"
+      - "scripts/test_string_display_settings.py"
+      - "scripts/test_string_api_settings.py"
       - "scripts/prepare_publication_job.py"
       - "scripts/validate_publication_job.py"
       - "scripts/prepare_centrality_job.py"
@@ -45,6 +47,8 @@ on:
       - "modules/string_settings_ui.py"
       - "scripts/test_string_filters.py"
       - "scripts/test_string_settings_ui.py"
+      - "scripts/test_string_display_settings.py"
+      - "scripts/test_string_api_settings.py"
       - "scripts/prepare_publication_job.py"
       - "scripts/validate_publication_job.py"
       - "scripts/prepare_centrality_job.py"
@@ -80,6 +84,8 @@ jobs:
             modules/string_settings_ui.py \
             scripts/test_string_filters.py \
             scripts/test_string_settings_ui.py \
+            scripts/test_string_display_settings.py \
+            scripts/test_string_api_settings.py \
             scripts/prepare_publication_job.py \
             scripts/validate_publication_job.py \
             scripts/prepare_centrality_job.py \
@@ -93,6 +99,12 @@ jobs:
 
       - name: Test STRING settings/filter logic
         run: python scripts/test_string_filters.py
+
+      - name: Test STRING display-setting behavior
+        run: python scripts/test_string_display_settings.py
+
+      - name: Test STRING API-setting wiring
+        run: python scripts/test_string_api_settings.py
 
       - name: Smoke-test adjustable STRING Streamlit controls
         run: python scripts/test_string_settings_ui.py

@@ -8,6 +8,7 @@ import streamlit as st
 
 from modules.io_utils import build_results_zip, dataframe_tsv, normalize_targets, targets_from_upload
 from modules.hub_consensus_v2 import (
+    build_display_graph,
     build_graph,
     connected_and_isolated_targets,
 )
@@ -24,11 +25,11 @@ from modules.publication_ui import (
 )
 from modules.string_api import StringAPIError, run_string_workflow
 from modules.string_filters import SOURCE_LABELS
-from modules.string_settings_ui import render_string_settings
+from modules.string_settings_ui import render_string_settings, string_settings_signature
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 8
+APP_STATE_VERSION = 9
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
@@ -170,17 +171,7 @@ if targets:
 previous_analysis = st.session_state.get("analysis")
 current_signature = {
     "submitted_targets": list(targets),
-    "taxon_id": species,
-    "string_version": string_version,
-    "network_type": network_type,
-    "network_flavor": network_flavor,
-    "active_sources": list(active_sources),
-    "required_score": score_label,
-    "first_shell": string_options["first_shell"],
-    "second_shell": string_options["second_shell"],
-    "typed_physical_edges": string_options["typed_physical_edges"],
-    "typed_regulatory_edges": string_options["typed_regulatory_edges"],
-    "show_regulatory_signs": string_options["show_regulatory_signs"],
+    **string_settings_signature(string_options),
     "fdr_cutoff": fdr_cutoff,
     "top_n": top_n,
     "enrichment_top_n": enrichment_top_n,
@@ -380,6 +371,12 @@ if analysis:
     unresolved = analysis["unresolved"]
     settings = analysis["settings"]
     graph = build_graph(network)
+    display_graph = build_display_graph(
+        network,
+        mapping,
+        hide_disconnected_nodes=settings.get("hide_disconnected_nodes", False),
+        use_query_labels=settings.get("show_query_node_labels", False),
+    )
 
     st.divider()
     st.header("Results")
@@ -512,12 +509,14 @@ if analysis:
                 )
             else:
                 fig_net = network_figure(
-                    graph,
+                    display_graph,
                     set(hubs["Gene"]) if not hubs.empty else set(),
                     layout=settings.get("layout", "force_directed"),
                     show_labels=not settings.get("hide_node_labels", False),
                     label_font_size=settings.get("label_font_size", 12),
                     colorblind_friendly=settings.get("colorblind_friendly", True),
+                    center_node_labels=settings.get("center_node_labels", False),
+                    show_regulatory_signs=settings.get("show_regulatory_signs", True),
                 )
                 st.pyplot(fig_net, use_container_width=True)
                 render_downloads("consensus_hub_highlighted_ppi_network", fig_net)
@@ -742,14 +741,16 @@ if analysis:
         if native_media.get("link"):
             files["string_native_network_link.txt"] = native_media["link"].encode("utf-8")
 
-        if graph.number_of_nodes() > 0:
+        if display_graph.number_of_nodes() > 0:
             fig = network_figure(
-                graph,
+                display_graph,
                 set(hubs["Gene"]) if not hubs.empty else set(),
                 layout=settings.get("layout", "force_directed"),
                 show_labels=not settings.get("hide_node_labels", False),
                 label_font_size=settings.get("label_font_size", 12),
                 colorblind_friendly=settings.get("colorblind_friendly", True),
+                center_node_labels=settings.get("center_node_labels", False),
+                show_regulatory_signs=settings.get("show_regulatory_signs", True),
             )
             for fmt in ["png", "pdf", "svg"]:
                 files[f"figures/string_interaction_network.{fmt}"] = figure_bytes(fig, fmt)
