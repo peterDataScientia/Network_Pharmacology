@@ -1,0 +1,75 @@
+name: Publication enrichment job
+run-name: Publication enrichment - ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Opaque request identifier"
+        required: true
+        type: string
+      payload_b64:
+        description: "Gzip+URL-safe-base64 encoded analysis request"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: publication-enrichment-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/peterdatascientia/network-pharmacology-publication:validated
+  PAYLOAD_B64: ${{ inputs.payload_b64 }}
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Decode and validate request
+        id: prep
+        run: python scripts/prepare_publication_job.py
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Obtain validated R/Bioconductor image
+        run: |
+          if docker pull "$IMAGE_NAME"; then
+            echo "Using prebuilt validated image."
+          else
+            echo "Prebuilt image unavailable; building exact image from this repository."
+            docker build -f backend/Dockerfile -t "$IMAGE_NAME" .
+          fi
+
+      - name: Run publication enrichment
+        run: |
+          docker run --rm             -v "$PWD/job_input:/job_input:ro"             -v "$PWD/job_output:/job_output"             "$IMAGE_NAME"             Rscript /app/r/enrichment_publication.R               /job_input/foreground_symbols.txt               /job_output               "${{ steps.prep.outputs.organism }}"               "${{ steps.prep.outputs.background_mode }}"               "${{ steps.prep.outputs.background_arg }}"
+
+      - name: Validate versions and scientific output
+        run: |
+          python scripts/validate_publication_job.py             job_input/request.json             job_output/summary.json
+
+      - name: Upload publication results
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-enrichment-${{ inputs.request_id }}
+          path: job_output/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
