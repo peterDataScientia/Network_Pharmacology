@@ -4,7 +4,17 @@ import base64
 import gzip
 import json
 import os
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from modules.publication_settings import (
+    PublicationSettingsError,
+    normalize_publication_analysis_settings,
+)
 
 TAXON_TO_ORGANISM = {
     9606: "human",
@@ -60,6 +70,13 @@ def main() -> None:
     if background_mode == "custom" and not custom_background:
         raise SystemExit("Custom background mode requires at least one background gene.")
 
+    try:
+        analysis_settings = normalize_publication_analysis_settings(
+            payload.get("analysis_settings")
+        )
+    except PublicationSettingsError as exc:
+        raise SystemExit(str(exc)) from exc
+
     request_id = str(payload.get("request_id", "")).strip()
     if not request_id:
         raise SystemExit("request_id is required.")
@@ -81,6 +98,12 @@ def main() -> None:
         )
         background_arg = "/job_input/custom_background_symbols.txt"
 
+    settings_path = root / "analysis_settings.json"
+    settings_path.write_text(
+        json.dumps(analysis_settings, indent=2),
+        encoding="utf-8",
+    )
+
     normalized = {
         "request_id": request_id,
         "targets": targets,
@@ -88,6 +111,7 @@ def main() -> None:
         "organism": organism,
         "background_mode": background_mode,
         "custom_background": custom_background if background_mode == "custom" else None,
+        "analysis_settings": analysis_settings,
     }
     (root / "request.json").write_text(
         json.dumps(normalized, indent=2),
@@ -101,6 +125,8 @@ def main() -> None:
             fh.write(f"background_mode={background_mode}\n")
             fh.write(f"background_arg={background_arg}\n")
             fh.write(f"request_id={request_id}\n")
+            fh.write("settings_path=job_input/analysis_settings.json\n")
+            fh.write("settings_docker_path=/job_input/analysis_settings.json\n")
 
     print(
         f"Prepared publication job {request_id}: "
