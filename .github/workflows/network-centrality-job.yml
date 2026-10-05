@@ -1,0 +1,78 @@
+name: R igraph network centrality
+run-name: R centrality - ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Opaque centrality request identifier"
+        required: true
+        type: string
+      payload_b64:
+        description: "Gzip+URL-safe-base64 encoded centrality request"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: network-centrality-global
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/peterdatascientia/network-pharmacology-publication:validated
+  PAYLOAD_B64: ${{ inputs.payload_b64 }}
+
+jobs:
+  centrality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Re-fetch exact STRING network and verify parity
+        id: prep
+        run: python scripts/prepare_centrality_job.py
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull validated R/Bioconductor + igraph image
+        run: docker pull "$IMAGE_NAME"
+
+      - name: Run R igraph centrality
+        run: |
+          docker run --rm \
+            -v "$PWD/centrality_input:/centrality_input:ro" \
+            -v "$PWD/centrality_output:/centrality_output" \
+            "$IMAGE_NAME" \
+            Rscript /app/r/network_centrality.R \
+              /centrality_input/network.tsv \
+              /centrality_output \
+              "${{ steps.prep.outputs.top_n }}"
+
+      - name: Validate centrality provenance and output
+        run: |
+          python scripts/validate_centrality_job.py \
+            centrality_input/request.json \
+            centrality_output
+
+      - name: Upload R centrality results
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-centrality-${{ inputs.request_id }}
+          path: centrality_output/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
