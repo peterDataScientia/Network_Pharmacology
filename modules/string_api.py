@@ -6,6 +6,11 @@ from typing import Iterable
 import pandas as pd
 import requests
 
+from modules.string_filters import (
+    applicable_sources,
+    filter_and_normalize_rows,
+)
+
 # Explicit STRING version pinning is required for reproducible network topology.
 # The EGCG/RISI manuscript reference workflow used STRING v12.0.
 STRING_API_BASES = {
@@ -130,6 +135,13 @@ def get_network(
     species: int,
     required_score: int,
     network_type: str,
+    *,
+    network_flavor: str = "evidence",
+    active_sources: list[str] | None = None,
+    add_nodes: int = 0,
+    typed_physical_edges: bool = True,
+    typed_regulatory_edges: bool = True,
+    show_query_node_labels: bool = False,
     string_version: str = "12.0",
 ) -> pd.DataFrame:
     payload = {
@@ -137,15 +149,31 @@ def get_network(
         "species": species,
         "required_score": int(required_score),
         "network_type": network_type,
-        "add_nodes": 0,
+        "add_nodes": max(0, int(add_nodes)),
+        "show_query_node_labels": int(bool(show_query_node_labels)),
         "caller_identity": CALLER_IDENTITY,
     }
+    if network_type == "functional" and network_flavor == "typed":
+        payload.update(
+            network_flavor="typed",
+            typed_physical_edges=int(bool(typed_physical_edges)),
+            typed_regulatory_edges=int(bool(typed_regulatory_edges)),
+        )
+
     rows = _post_json(
         "network",
         payload,
         string_version=string_version,
     )
-    return pd.DataFrame(rows)
+    selected_sources = active_sources or list(applicable_sources(network_type))
+    filtered = filter_and_normalize_rows(
+        rows if isinstance(rows, list) else [],
+        active_sources=selected_sources,
+        required_score=required_score,
+        network_type=network_type,
+        network_flavor=network_flavor,
+    )
+    return pd.DataFrame(filtered)
 
 
 def get_enrichment(
@@ -171,13 +199,29 @@ def get_network_media(
     species: int,
     required_score: int,
     network_type: str,
+    *,
     network_flavor: str = "evidence",
+    first_shell: int = 0,
+    second_shell: int = 0,
+    active_sources: list[str] | None = None,
+    typed_physical_edges: bool = True,
+    typed_regulatory_edges: bool = True,
+    show_regulatory_signs: bool = True,
+    bubble_3d: bool = True,
+    block_structure_pics: bool = False,
+    center_node_labels: bool = False,
+    show_query_node_labels: bool = False,
+    hide_disconnected_nodes: bool = False,
+    hide_node_labels: bool = False,
+    label_font_size: int = 12,
     string_version: str = "12.0",
 ) -> dict:
     """Retrieve STRING's own high-resolution PNG, SVG and stable network link.
 
-    Media failures are recorded independently so a temporary image-rendering
-    problem does not discard otherwise valid network/enrichment results.
+    The public STRING image/link API exposes network type, flavor, neighborhood
+    and display controls. It does not expose the website's evidence-channel or
+    direct-vs-transferred evidence toggles, so source-filtered analyses are
+    accompanied by a provenance warning rather than a misleading native image claim.
     """
     image_payload = {
         "identifiers": _identifiers(string_ids),
@@ -185,28 +229,30 @@ def get_network_media(
         "required_score": int(required_score),
         "network_type": network_type,
         "network_flavor": network_flavor,
-        "add_color_nodes": 0,
-        "add_white_nodes": 0,
-        "hide_node_labels": 0,
-        "hide_disconnected_nodes": 0,
-        "block_structure_pics_in_bubbles": 0,
-        "flat_node_design": 0,
-        "center_node_labels": 0,
-        "custom_label_font_size": 12,
+        "add_color_nodes": max(0, int(first_shell)),
+        "add_white_nodes": max(0, int(second_shell)),
+        "typed_physical_edges": int(bool(typed_physical_edges)),
+        "typed_regulatory_edges": int(bool(typed_regulatory_edges)),
+        "show_regulatory_signs": int(bool(show_regulatory_signs)),
+        "hide_node_labels": int(bool(hide_node_labels)),
+        "hide_disconnected_nodes": int(bool(hide_disconnected_nodes)),
+        "show_query_node_labels": int(bool(show_query_node_labels)),
+        "block_structure_pics_in_bubbles": int(bool(block_structure_pics)),
+        "flat_node_design": int(not bool(bubble_3d)),
+        "center_node_labels": int(bool(center_node_labels)),
+        "custom_label_font_size": max(5, min(50, int(label_font_size))),
         "caller_identity": CALLER_IDENTITY,
     }
 
     link_payload = {
-        "identifiers": _identifiers(string_ids),
-        "species": species,
-        "required_score": int(required_score),
-        "network_type": network_type,
-        "network_flavor": network_flavor,
-        "add_color_nodes": 0,
-        "add_white_nodes": 0,
-        "hide_node_labels": 0,
-        "hide_disconnected_nodes": 0,
-        "caller_identity": CALLER_IDENTITY,
+        key: value
+        for key, value in image_payload.items()
+        if key
+        not in {
+            "flat_node_design",
+            "center_node_labels",
+            "custom_label_font_size",
+        }
     }
 
     media = {
@@ -214,7 +260,17 @@ def get_network_media(
         "svg": None,
         "link": None,
         "errors": [],
+        "warnings": [],
     }
+
+    selected = set(active_sources or applicable_sources(network_type))
+    if selected != set(applicable_sources(network_type)):
+        media["warnings"].append(
+            "The app analysis is filtered to the selected evidence channels. "
+            "STRING's public image/link API does not expose that channel filter, "
+            "so the native STRING figure/link may contain additional all-source edges. "
+            "Use the app-generated network as the authoritative filtered topology."
+        )
 
     try:
         media["highres_png"] = _post_binary(
@@ -249,8 +305,6 @@ def get_network_media(
             string_version=string_version,
         ).strip()
         if link:
-            # The endpoint normally returns only the stable URL. If tabular
-            # output ever includes extra columns, keep the URL-like field.
             fields = link.split("\t")
             media["link"] = next(
                 (field.strip() for field in fields if field.strip().startswith("http")),
@@ -267,7 +321,21 @@ def run_string_workflow(
     species: int,
     required_score: int,
     network_type: str,
+    *,
     network_flavor: str = "evidence",
+    active_sources: list[str] | None = None,
+    first_shell: int = 0,
+    second_shell: int = 0,
+    typed_physical_edges: bool = True,
+    typed_regulatory_edges: bool = True,
+    show_regulatory_signs: bool = True,
+    bubble_3d: bool = True,
+    block_structure_pics: bool = False,
+    center_node_labels: bool = False,
+    show_query_node_labels: bool = False,
+    hide_disconnected_nodes: bool = False,
+    hide_node_labels: bool = False,
+    label_font_size: int = 12,
     string_version: str = "12.0",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """Run the complete STRING workflow with courteous sequential API calls."""
@@ -280,6 +348,7 @@ def run_string_workflow(
         raise StringAPIError("None of the submitted identifiers could be mapped by STRING.")
 
     ids = mapping["stringId"].dropna().astype(str).drop_duplicates().tolist()
+    selected_sources = active_sources or list(applicable_sources(network_type))
 
     time.sleep(1.0)
     network = get_network(
@@ -287,6 +356,12 @@ def run_string_workflow(
         species,
         required_score,
         network_type,
+        network_flavor=network_flavor,
+        active_sources=selected_sources,
+        add_nodes=max(0, int(first_shell) + int(second_shell)),
+        typed_physical_edges=typed_physical_edges,
+        typed_regulatory_edges=typed_regulatory_edges,
+        show_query_node_labels=show_query_node_labels,
         string_version=string_version,
     )
 
@@ -304,6 +379,19 @@ def run_string_workflow(
         required_score,
         network_type,
         network_flavor=network_flavor,
+        first_shell=first_shell,
+        second_shell=second_shell,
+        active_sources=selected_sources,
+        typed_physical_edges=typed_physical_edges,
+        typed_regulatory_edges=typed_regulatory_edges,
+        show_regulatory_signs=show_regulatory_signs,
+        bubble_3d=bubble_3d,
+        block_structure_pics=block_structure_pics,
+        center_node_labels=center_node_labels,
+        show_query_node_labels=show_query_node_labels,
+        hide_disconnected_nodes=hide_disconnected_nodes,
+        hide_node_labels=hide_node_labels,
+        label_font_size=label_font_size,
         string_version=string_version,
     )
 
