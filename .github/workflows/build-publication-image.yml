@@ -40,18 +40,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push validated image
+      - name: Build candidate image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: backend/Dockerfile
-          push: true
+          load: true
+          push: false
           tags: ${{ env.IMAGE_NAME }}
           cache-from: type=gha,scope=publication-image
           cache-to: type=gha,mode=max,scope=publication-image
-
-      - name: Pull image for parity validation
-        run: docker pull "$IMAGE_NAME"
 
       - name: Run exact 32-gene publication parity gate
         run: |
@@ -88,3 +86,6 @@ jobs:
           print("Versions:", x["versions"])
           print("Counts:", x["counts"])
           PY
+
+      - name: Publish parity-validated image
+        run: docker push "$IMAGE_NAME"
