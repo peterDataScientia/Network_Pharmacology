@@ -8,10 +8,39 @@ import streamlit as st
 
 from modules.io_utils import build_results_zip, dataframe_tsv, normalize_targets, targets_from_upload
 from modules.hub_consensus_v2 import (
-    build_display_graph,
     build_graph,
     connected_and_isolated_targets,
 )
+
+try:
+    from modules.hub_consensus_v2 import build_display_graph
+except ImportError:
+    def build_display_graph(
+        network: pd.DataFrame,
+        mapping: pd.DataFrame,
+        *,
+        hide_disconnected_nodes: bool = False,
+        use_query_labels: bool = False,
+    ):
+        """Backward-compatible display helper for rolling Streamlit deploys."""
+        graph = build_graph(network)
+        if hide_disconnected_nodes or mapping.empty:
+            return graph
+
+        if use_query_labels and "queryItem" in mapping.columns:
+            names = mapping["queryItem"]
+        elif "preferredName" in mapping.columns:
+            names = mapping["preferredName"]
+        elif "stringId" in mapping.columns:
+            names = mapping["stringId"]
+        else:
+            return graph
+
+        for value in names.dropna().astype(str):
+            name = value.strip()
+            if name:
+                graph.add_node(name)
+        return graph
 from modules.centrality_github import (
     CentralityGitHubError,
     run_r_igraph_centrality,
@@ -25,7 +54,45 @@ from modules.publication_ui import (
 )
 from modules.string_api import StringAPIError, run_string_workflow
 from modules.string_filters import SOURCE_LABELS
-from modules.string_settings_ui import render_string_settings, string_settings_signature
+from modules.string_settings_ui import render_string_settings
+
+try:
+    from modules.string_settings_ui import string_settings_signature
+except ImportError:
+    def string_settings_signature(options: dict) -> dict:
+        """Backward-compatible signature helper for rolling Streamlit deploys."""
+        keys = (
+            "species",
+            "string_version",
+            "network_type",
+            "network_flavor",
+            "active_sources",
+            "required_score",
+            "first_shell",
+            "second_shell",
+            "layout",
+            "colorblind_friendly",
+            "bubble_3d",
+            "block_structure_pics",
+            "center_node_labels",
+            "show_query_node_labels",
+            "hide_disconnected_nodes",
+            "hide_node_labels",
+            "label_font_size",
+            "typed_physical_edges",
+            "typed_regulatory_edges",
+            "show_regulatory_signs",
+        )
+        out = {}
+        for key in keys:
+            value = options.get(key)
+            if key == "species" and value is not None:
+                out["taxon_id"] = int(value)
+            elif key == "active_sources":
+                out[key] = list(value or [])
+            elif key not in {"species"}:
+                out[key] = value
+        return out
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
