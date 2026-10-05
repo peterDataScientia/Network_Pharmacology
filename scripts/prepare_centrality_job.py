@@ -11,6 +11,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from modules.string_filters import applicable_sources, filter_and_normalize_rows
+
 STRING_API_BASES = {
     "12.0": "https://version-12.string-db.org/api",
     "12.5": "https://version-12-5.string-db.org/api",
@@ -59,14 +61,20 @@ def _fetch_network(payload: dict) -> list[dict]:
     if not identifiers:
         raise SystemExit("No STRING identifiers were supplied.")
 
-    form = urllib.parse.urlencode({
+    network_type = str(payload["network_type"])
+    network_flavor = str(payload.get("network_flavor", "evidence"))
+    form_values = {
         "identifiers": "\r".join(identifiers),
         "species": int(payload["taxon_id"]),
         "required_score": int(payload["required_score"]),
-        "network_type": str(payload["network_type"]),
-        "add_nodes": 0,
+        "network_type": network_type,
+        "add_nodes": max(0, int(payload.get("add_nodes", 0))),
         "caller_identity": CALLER_IDENTITY,
-    }).encode("utf-8")
+    }
+    if network_type == "functional" and network_flavor == "typed":
+        form_values["network_flavor"] = "typed"
+
+    form = urllib.parse.urlencode(form_values).encode("utf-8")
 
     request = urllib.request.Request(
         f"{base}/json/network",
@@ -81,7 +89,17 @@ def _fetch_network(payload: dict) -> list[dict]:
 
     if not isinstance(rows, list):
         raise SystemExit("STRING returned an invalid network response.")
-    return rows
+
+    active_sources = payload.get("active_sources") or list(
+        applicable_sources(network_type)
+    )
+    return filter_and_normalize_rows(
+        rows,
+        active_sources=active_sources,
+        required_score=int(payload["required_score"]),
+        network_type=network_type,
+        network_flavor=network_flavor,
+    )
 
 
 def main() -> None:
