@@ -15,6 +15,8 @@ def network_figure(
     show_labels: bool = True,
     label_font_size: int | None = None,
     colorblind_friendly: bool = True,
+    center_node_labels: bool = False,
+    show_regulatory_signs: bool = True,
 ):
     hubs = hubs or set()
     fig, ax = plt.subplots(figsize=FIGSIZE, dpi=150)
@@ -82,13 +84,48 @@ def network_figure(
             label_size = 7 if graph.number_of_nodes() <= 40 else 5
         else:
             label_size = max(5, min(int(label_font_size), 50))
+
+        if center_node_labels:
+            label_pos = pos
+            valign = "center"
+        else:
+            ys = [float(value[1]) for value in pos.values()]
+            span = (max(ys) - min(ys)) if ys else 1.0
+            offset = max(span * 0.035, 0.025)
+            label_pos = {
+                node: (float(x), float(y) - offset)
+                for node, (x, y) in pos.items()
+            }
+            valign = "top"
+
         nx.draw_networkx_labels(
             graph,
-            pos,
+            label_pos,
             font_size=label_size,
             font_weight="bold",
+            verticalalignment=valign,
             ax=ax,
         )
+
+    if graph.is_directed() and show_regulatory_signs:
+        edge_labels = {}
+        for u, v, attrs in graph.edges(data=True):
+            sign = str(attrs.get("sign", "")).strip().lower()
+            if sign == "pos":
+                edge_labels[(u, v)] = "+"
+            elif sign == "neg":
+                edge_labels[(u, v)] = "−"
+        if edge_labels:
+            nx.draw_networkx_edge_labels(
+                graph,
+                pos,
+                edge_labels=edge_labels,
+                font_size=8,
+                rotate=False,
+                label_pos=0.55,
+                bbox={"alpha": 0.0, "edgecolor": "none"},
+                ax=ax,
+            )
 
     title = (
         "STRING regulatory network"
