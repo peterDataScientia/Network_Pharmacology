@@ -336,7 +336,7 @@ if analysis:
     enrichment = analysis["enrichment"]
     native_media = analysis.get(
         "native_media",
-        {"highres_png": None, "svg": None, "link": None, "errors": []},
+        {"highres_png": None, "svg": None, "link": None, "errors": [], "warnings": []},
     )
     centrality = analysis["centrality"]
     consensus_ranked = analysis["consensus_ranked"]
@@ -351,17 +351,30 @@ if analysis:
 
     st.divider()
     st.header("Results")
+    source_names = [
+        SOURCE_LABELS.get(source, source)
+        for source in settings.get("active_sources", [])
+    ]
+    centrality_label = (
+        "not applied to directed regulatory network"
+        if settings["network_type"] == "regulatory"
+        else "R/igraph"
+    )
     st.caption(
         f"STRING v{settings.get('string_version', '12.0')} · "
         f"{settings['network_type']} network · "
-        f"required score {settings['required_score']}/1000 · no added nodes · "
-        "centrality: R/igraph"
+        f"{settings.get('network_flavor', 'evidence')} edges · "
+        f"score ≥ {settings['required_score']/1000:.3f} · "
+        f"added interactors: {settings.get('add_nodes', 0)} · "
+        f"centrality: {centrality_label}"
     )
+    if source_names:
+        st.caption("Active evidence sources · " + " · ".join(source_names))
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Submitted", len(settings["submitted_targets"]))
     m2.metric("Mapped by STRING", len(mapping))
     m3.metric("Connected", len(connected_targets))
-    m4.metric("PPI edges", graph.number_of_edges())
+    m4.metric("Network edges", graph.number_of_edges())
     m5.metric("4/4 hubs", len(hubs))
 
     if unresolved:
@@ -372,7 +385,7 @@ if analysis:
         )
 
     tab_map, tab_net, tab_hub, tab_enrich, tab_export = st.tabs(
-        ["Target mapping", "PPI network", "Hub genes", "Enrichment", "Download package"]
+        ["Target mapping", "Network", "Hub genes", "Enrichment", "Download package"]
     )
 
     with tab_map:
@@ -395,10 +408,10 @@ if analysis:
         )
 
     with tab_net:
-        st.subheader("Protein–protein interaction network")
+        st.subheader("STRING interaction network")
         st.caption(
-            "The STRING-native figure is shown first. The second view is generated locally "
-            "to highlight the hub genes calculated by this app."
+            "The STRING-native rendering is shown first. The app-generated view uses the "
+            "selected evidence-source filter and your local layout/display settings."
         )
 
         native_tab, local_tab = st.tabs(
@@ -451,6 +464,9 @@ if analysis:
                     "The network data and local figure are still available."
                 )
 
+            if native_media.get("warnings"):
+                for warning in native_media["warnings"]:
+                    st.warning(warning)
             if native_media.get("errors"):
                 with st.expander("STRING media retrieval notes"):
                     for error in native_media["errors"]:
@@ -466,20 +482,30 @@ if analysis:
                 fig_net = network_figure(
                     graph,
                     set(hubs["Gene"]) if not hubs.empty else set(),
+                    layout=settings.get("layout", "force_directed"),
+                    show_labels=not settings.get("hide_node_labels", False),
+                    label_font_size=settings.get("label_font_size", 12),
+                    colorblind_friendly=settings.get("colorblind_friendly", True),
                 )
                 st.pyplot(fig_net, use_container_width=True)
                 render_downloads("consensus_hub_highlighted_ppi_network", fig_net)
                 plt.close(fig_net)
-                st.caption(
-                    "Green nodes are 4/4 consensus hubs (Top-N in Degree, Betweenness, "
-                    "Closeness and Eigenvector); blue nodes are other connected proteins. "
-                    "This is an app-generated figure, not STRING's native rendering."
-                )
+                if settings["network_type"] == "regulatory":
+                    st.caption(
+                        "Directed arrows represent STRING regulatory relationships. "
+                        "The validated undirected 4/4 hub workflow is not overlaid on this view."
+                    )
+                else:
+                    st.caption(
+                        "Highlighted nodes are 4/4 consensus hubs from the validated "
+                        "R/igraph workflow. This app-generated view follows the selected "
+                        "source filter and layout."
+                    )
 
         if network.empty:
             st.warning(
-                "No PPI edges passed the selected STRING score threshold. Try a lower "
-                "threshold or review the submitted targets."
+                "No interactions passed the selected STRING network settings. Try a lower "
+                "score threshold, enable additional evidence sources, or review the targets."
             )
         else:
             st.markdown("#### STRING interaction table")
@@ -493,15 +519,25 @@ if analysis:
 
     with tab_hub:
         st.subheader("Consensus hub-target analysis")
-        st.caption(
-            "Primary hub definition: a gene must rank within the Top "
-            f"{effective_top_n} connected targets for all four unweighted topology metrics "
-            "(Degree, Betweenness, Closeness and Eigenvector), calculated in R/igraph."
-        )
+        if settings["network_type"] == "regulatory":
+            st.info(
+                "This is a directed regulatory network. The existing 4/4 consensus method "
+                "was validated for undirected functional/physical topology, so PanDoc does "
+                "not silently reuse it here. The directed network remains available in the "
+                "Network tab and downloads."
+            )
+        else:
+            st.caption(
+                "Primary hub definition: a gene must rank within the Top "
+                f"{effective_top_n} connected targets for all four unweighted topology metrics "
+                "(Degree, Betweenness, Closeness and Eigenvector), calculated in R/igraph."
+            )
 
-        if centrality.empty:
+        if settings["network_type"] == "regulatory":
+            pass
+        elif centrality.empty:
             st.warning(
-                "Centrality cannot be calculated because no PPI edges passed the selected threshold."
+                "Centrality cannot be calculated because no interactions passed the selected settings."
             )
         else:
             if len(centrality) <= effective_top_n:
@@ -678,6 +714,10 @@ if analysis:
             fig = network_figure(
                 graph,
                 set(hubs["Gene"]) if not hubs.empty else set(),
+                layout=settings.get("layout", "force_directed"),
+                show_labels=not settings.get("hide_node_labels", False),
+                label_font_size=settings.get("label_font_size", 12),
+                colorblind_friendly=settings.get("colorblind_friendly", True),
             )
             for fmt in ["png", "pdf", "svg"]:
                 files[f"figures/string_ppi_network.{fmt}"] = figure_bytes(fig, fmt)
