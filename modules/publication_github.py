@@ -13,6 +13,8 @@ from typing import Callable
 import pandas as pd
 import requests
 
+from modules.publication_settings import normalize_publication_analysis_settings
+
 DEFAULT_REPOSITORY = "peterDataScientia/Network_Pharmacology"
 DEFAULT_WORKFLOW = "publication-enrichment-job.yml"
 DEFAULT_REF = "main"
@@ -20,6 +22,10 @@ MAX_DISPATCH_PAYLOAD_CHARS = 55000
 
 TABLE_FILES = {
     "mapping_foreground": "mapping_foreground.csv",
+    "go_bp_all": "go_bp_all_tested.csv",
+    "go_cc_all": "go_cc_all_tested.csv",
+    "go_mf_all": "go_mf_all_tested.csv",
+    "reactome_all": "reactome_all_tested.csv",
     "unmapped_foreground": "unmapped_foreground.csv",
     "go_bp_raw": "go_bp_raw_significant.csv",
     "go_bp_reduced": "go_bp_reduced.csv",
@@ -167,13 +173,16 @@ def _encode_payload(
     taxon_id: int,
     background_mode: str,
     custom_background: list[str] | None,
+    analysis_settings: dict | None,
     ref_sha: str,
 ) -> tuple[str, str]:
+    normalized_settings = normalize_publication_analysis_settings(analysis_settings)
     core = {
         "targets": targets,
         "taxon_id": int(taxon_id),
         "background_mode": background_mode,
         "custom_background": custom_background if background_mode == "custom" else None,
+        "analysis_settings": normalized_settings,
     }
     canonical = json.dumps(
         core,
@@ -379,6 +388,7 @@ def run_github_publication_enrichment(
     taxon_id: int,
     background_mode: str,
     custom_background: list[str] | None = None,
+    analysis_settings: dict | None = None,
     *,
     status_callback: Callable[[str], None] | None = None,
     timeout_seconds: int = 1800,
@@ -397,6 +407,7 @@ def run_github_publication_enrichment(
         taxon_id,
         background_mode,
         custom_background,
+        analysis_settings,
         ref_sha,
     )
 
