@@ -133,28 +133,48 @@ The validation intentionally runs both the older default-background design and t
 A GitHub Actions workflow, `.github/workflows/validate-publication-enrichment.yml`, performs Python syntax checks, installs the Bioconductor environment and runs the EGCG validation. The EGCG reference workflow reproduced all eight raw/reduced term counts exactly before production integration.
 
 
-## Publication Enrichment backend deployment
+## Publication Enrichment compute deployment
 
-The publication-grade GO/Reactome workflow is too memory-intensive for the Streamlit Community Cloud process and for 512 MiB backend instances. The validated production architecture therefore runs the exact R/Bioconductor engine as a separate Modal web function.
+The heavy publication-grade GO/Reactome workflow runs outside the Streamlit
+Community Cloud process. The primary production executor is **GitHub Actions**
+on this public repository; Modal is retained only as a temporary legacy
+fallback during migration.
 
-The Modal definition is `backend/modal_app.py`. It builds from `backend/Dockerfile`, preserving the validated scientific environment:
+### Primary executor: GitHub Actions
+
+Flow:
+
+```text
+Streamlit
+   ↓ workflow_dispatch
+GitHub Actions temporary Ubuntu runner
+   ↓
+validated R/Bioconductor container
+   ↓
+r/enrichment_publication.R
+   ↓
+1-day GitHub Actions result artifact
+   ↓
+Streamlit downloads and renders the result
+```
+
+The workflow is `.github/workflows/publication-enrichment-job.yml`. A
+prebuilt validated container is maintained by
+`.github/workflows/build-publication-image.yml` in GitHub Container Registry.
+If the prebuilt image is temporarily unavailable, the job can build the same
+`backend/Dockerfile` directly from the repository.
+
+Every job validates the scientific environment before its result is accepted:
 
 - R 4.6.1 / Bioconductor 3.23
 - clusterProfiler 4.20.0
 - ReactomePA 1.56.0
 - AnnotationDbi 1.74.0
-- org.Hs.eg.db 3.23.1
+- GOSemSim 2.38.0
+- organism-specific OrgDb version
 
-The Modal function requests 2 CPU cores and 4096 MiB RAM, scales to zero when idle, permits at most two concurrent containers, and uses the existing FastAPI `/health` and `/enrich` routes.
-
-The backend requires a Modal Secret named `network-pharmacology-publication-api` containing `PUBLICATION_API_KEY`. Streamlit should be configured with:
-
-```text
-PUBLICATION_BACKEND_URL=https://<modal-web-url>
-PUBLICATION_BACKEND_KEY=<same API key>
-```
-
-The GitHub workflow `.github/workflows/validate-publication-backend.yml` first runs the exact 32-gene EGCG parity gate under a 4 GiB memory limit. A deployment is permitted only after the historical reference counts match exactly:
+For the exact 32-gene EGCG–RISI reference set with package/default background,
+the workflow additionally requires exact historical parity:
 
 ```text
 GO-BP      1432 -> 49
@@ -163,4 +183,35 @@ GO-MF        54 -> 26
 Reactome    276 -> 91
 ```
 
-The workflow's deployment job is manual (`workflow_dispatch`) and requires GitHub environment secrets `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
+The app uses the original submitted gene symbols for publication enrichment and
+maps SYMBOL → ENTREZ directly with AnnotationDbi. STRING preferred-name changes
+therefore do not alter the enrichment foreground.
+
+Configure Streamlit with a fine-grained GitHub token restricted to this
+repository and **Actions: read and write**:
+
+```toml
+PUBLICATION_GITHUB_TOKEN = "<fine-grained GitHub token>"
+```
+
+Optional overrides are:
+
+```toml
+PUBLICATION_GITHUB_REPOSITORY = "peterDataScientia/Network_Pharmacology"
+PUBLICATION_GITHUB_WORKFLOW = "publication-enrichment-job.yml"
+PUBLICATION_GITHUB_REF = "main"
+```
+
+When `PUBLICATION_GITHUB_TOKEN` is configured, GitHub Actions takes priority
+over every other executor. Identical successful requests from the same code
+revision reuse their still-valid result artifact instead of starting another
+job.
+
+### Legacy Modal fallback
+
+The existing Modal backend remains available temporarily through
+`PUBLICATION_BACKEND_URL` and `PUBLICATION_BACKEND_KEY`. It is used only when
+the GitHub Actions token is absent. Once the GitHub execution path has passed
+the end-to-end Streamlit reference test, the Modal app can be stopped without
+affecting Publication Enrichment.
+
