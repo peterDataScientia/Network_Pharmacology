@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from modules.publication_settings import (
+    is_reference_default_settings,
+    normalize_publication_analysis_settings,
+)
 from modules.reference_validation import (
     EGCG_RISI_ENRICHMENT_DEFAULT_EXPECTED,
     PUBLICATION_VERSION_EXPECTED,
@@ -36,6 +40,27 @@ def main() -> None:
         fail(
             f"Background mode mismatch: observed {summary.get('background_mode')!r}, "
             f"expected {expected_mode!r}"
+        )
+
+    expected_settings = normalize_publication_analysis_settings(
+        request.get("analysis_settings")
+    )
+    observed_settings = summary.get("analysis_settings", {})
+    observed_normalized = normalize_publication_analysis_settings({
+        **observed_settings,
+        "go_bp_preselect_n": (
+            None
+            if observed_settings.get("go_bp_preselect_n") == "all"
+            else observed_settings.get("go_bp_preselect_n")
+        ),
+    })
+    if observed_normalized != expected_settings:
+        fail(
+            "Analysis settings mismatch between request and R output: "
+            + json.dumps(
+                {"observed": observed_normalized, "expected": expected_settings},
+                sort_keys=True,
+            )
         )
 
     expected_submitted = len(request["targets"])
@@ -70,6 +95,7 @@ def main() -> None:
         request["taxon_id"] == 9606
         and expected_mode == "default"
         and is_egcg_risi_reference(request["targets"])
+        and is_reference_default_settings(expected_settings)
     ):
         observed_counts = summary.get("counts", {})
         mismatches = {
@@ -90,6 +116,7 @@ def main() -> None:
         "git_sha": os.environ.get("GITHUB_SHA"),
         "validated_at_utc": datetime.now(timezone.utc).isoformat(),
         "reference_parity": reference_parity,
+        "analysis_settings": expected_settings,
         "versions": versions,
     }
     out = summary_path.parent / "job_metadata.json"

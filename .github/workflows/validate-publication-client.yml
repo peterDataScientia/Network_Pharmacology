@@ -8,6 +8,10 @@ on:
       - "modules/publication_github.py"
       - "modules/publication_enrichment.py"
       - "modules/publication_ui.py"
+      - "modules/publication_plots.py"
+      - "modules/publication_settings.py"
+      - "r/enrichment_publication.R"
+      - "scripts/test_publication_workspace.py"
       - "modules/centrality_github.py"
       - "modules/hub_consensus_v2.py"
       - "modules/hub_plots_v2.py"
@@ -29,6 +33,10 @@ on:
       - "modules/publication_github.py"
       - "modules/publication_enrichment.py"
       - "modules/publication_ui.py"
+      - "modules/publication_plots.py"
+      - "modules/publication_settings.py"
+      - "r/enrichment_publication.R"
+      - "scripts/test_publication_workspace.py"
       - "modules/centrality_github.py"
       - "modules/hub_consensus_v2.py"
       - "modules/hub_plots_v2.py"
@@ -61,6 +69,9 @@ jobs:
             modules/publication_github.py \
             modules/publication_enrichment.py \
             modules/publication_ui.py \
+            modules/publication_plots.py \
+            modules/publication_settings.py \
+            scripts/test_publication_workspace.py \
             modules/centrality_github.py \
             modules/hub_consensus_v2.py \
             modules/hub_plots_v2.py \
@@ -76,6 +87,9 @@ jobs:
 
       - name: Install app dependencies for UI smoke test
         run: pip install -r requirements.txt
+
+      - name: Test publication enrichment workspace
+        run: python scripts/test_publication_workspace.py
 
       - name: Test STRING settings/filter logic
         run: python scripts/test_string_filters.py
