@@ -1,0 +1,22 @@
+Package: NetworkPharmacologyRuntime
+Type: Package
+Title: Reproducible R Runtime for Network Pharmacology Analyses
+Version: 0.0.1
+Authors@R: person("Network", "Pharmacology", role = c("aut", "cre"), email = "noreply@example.com")
+Description: Dependency manifest for the reproducible R analysis runtime used by
+    the Network Pharmacology application. This file is intentionally kept
+    independent of any one validation dataset so additional analysis packages
+    can be added later without redesigning the execution backend.
+License: MIT
+Encoding: UTF-8
+Depends:
+    R (== 4.6.1)
+Imports:
+    clusterProfiler (== 4.20.0),
+    ReactomePA (== 1.56.0),
+    AnnotationDbi (== 1.74.0),
+    GOSemSim (== 2.38.3),
+    org.Hs.eg.db (== 3.23.1),
+    org.Mm.eg.db (== 3.23.0),
+    org.Rn.eg.db (== 3.23.0),
+    jsonlite
