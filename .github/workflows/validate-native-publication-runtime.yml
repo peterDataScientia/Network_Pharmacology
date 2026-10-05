@@ -1,0 +1,122 @@
+name: Validate cached native R enrichment runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "DESCRIPTION"
+      - "r/enrichment_publication.R"
+      - "scripts/validate_publication_job.py"
+      - "validation/egcg_risi_shared_targets.txt"
+      - ".github/workflows/validate-native-publication-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-native-publication-runtime-main
+  cancel-in-progress: true
+
+env:
+  GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+  R_BIOC_VERSION: "3.23"
+  R_KEEP_PKG_SOURCE: "yes"
+  PUBLICATION_USE_SEMDATA_CACHE: "0"
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up exact R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.1"
+          use-public-rspm: true
+
+      - name: Restore/install declared R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: "publication-runtime-v1"
+
+      - name: Verify exact scientific package versions
+        shell: Rscript {0}
+        run: |
+          expected <- c(
+            clusterProfiler = "4.20.0",
+            ReactomePA = "1.56.0",
+            AnnotationDbi = "1.74.0",
+            GOSemSim = "2.38.3",
+            "org.Hs.eg.db" = "3.23.1",
+            "org.Mm.eg.db" = "3.23.0",
+            "org.Rn.eg.db" = "3.23.0"
+          )
+          stopifnot(grepl("4.6.1", R.version.string))
+          for (pkg in names(expected)) {
+            got <- as.character(utils::packageVersion(pkg))
+            if (!identical(got, unname(expected[[pkg]]))) {
+              stop(pkg, " version mismatch: expected ", expected[[pkg]], ", got ", got)
+            }
+          }
+          cat("EXACT_R_PACKAGE_VERSIONS_OK\n")
+
+      - name: Prepare exact 32-gene regression request
+        run: |
+          rm -rf job_input job_output
+          mkdir -p job_input job_output
+          cp validation/egcg_risi_shared_targets.txt job_input/foreground_symbols.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          genes = [
+              x.strip()
+              for x in Path("job_input/foreground_symbols.txt").read_text().splitlines()
+              if x.strip()
+          ]
+          Path("job_input/request.json").write_text(json.dumps({
+              "request_id": "native-runtime-reference-gate",
+              "targets": genes,
+              "taxon_id": 9606,
+              "organism": "human",
+              "background_mode": "default",
+              "custom_background": None,
+          }, indent=2))
+          PY
+
+      - name: Run generic enrichment engine
+        id: benchmark
+        run: |
+          start=$(date +%s)
+          Rscript r/enrichment_publication.R \
+            job_input/foreground_symbols.txt \
+            job_output \
+            human \
+            default \
+            NONE
+          end=$(date +%s)
+          echo "analysis_seconds=$((end-start))" >> "$GITHUB_OUTPUT"
+          echo "Native R analysis seconds: $((end-start))"
+
+      - name: Validate exact publication reference
+        run: |
+          python scripts/validate_publication_job.py \
+            job_input/request.json \
+            job_output/summary.json
+
+      - name: Show benchmark and versions
+        run: |
+          echo "NATIVE_R_REFERENCE_PARITY_OK"
+          echo "analysis_seconds=${{ steps.benchmark.outputs.analysis_seconds }}"
+          cat job_output/summary.json
+
+      - name: Upload validation result
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-r-enrichment-validation
+          path: job_output/
+          retention-days: 1
+          if-no-files-found: error
