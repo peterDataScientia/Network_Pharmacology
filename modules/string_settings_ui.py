@@ -164,6 +164,11 @@ def render_string_settings(st) -> dict:
         st.markdown("**Max number of interactors to show**")
         first_shell = _shell_control(st, "1st shell", "string_first_shell")
         second_shell = _shell_control(st, "2nd shell", "string_second_shell")
+        st.caption(
+            "STRING's native image/link receives the two shell values separately. "
+            "The tabular network API used for downstream analysis exposes one add_nodes "
+            "parameter, so the analyzed topology uses their total."
+        )
 
     with st.expander("Advanced Settings", expanded=False):
         layout = st.radio(
