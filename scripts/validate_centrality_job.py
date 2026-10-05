@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pandas as pd
 
 EXPECTED_IGRAPH = "2.3.4"
 EXPECTED_R = "4.6.1"
@@ -14,6 +13,11 @@ EXPECTED_R = "4.6.1"
 
 def fail(message: str) -> None:
     raise SystemExit(message)
+
+
+def _csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
 
 
 def main() -> None:
@@ -71,9 +75,9 @@ def main() -> None:
             fail(f"Missing centrality output: {path.name}")
 
     if expected_nodes > 0:
-        centrality = pd.read_csv(outdir / "centrality_all_genes.csv")
-        ranked = pd.read_csv(outdir / "centrality_consensus_rankings.csv")
-        hubs = pd.read_csv(outdir / "consensus_hubs_4of4.csv")
+        centrality = _csv_rows(outdir / "centrality_all_genes.csv")
+        ranked = _csv_rows(outdir / "centrality_consensus_rankings.csv")
+        hubs = _csv_rows(outdir / "consensus_hubs_4of4.csv")
 
         if len(centrality) != expected_nodes:
             fail(
