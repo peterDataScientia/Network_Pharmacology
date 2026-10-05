@@ -167,7 +167,39 @@ st.write(f"**Detected targets:** {len(targets)}")
 if targets:
     st.caption(", ".join(targets[:30]) + (" …" if len(targets) > 30 else ""))
 
-run = st.button("Run complete analysis", type="primary", use_container_width=True)
+previous_analysis = st.session_state.get("analysis")
+current_signature = {
+    "submitted_targets": list(targets),
+    "taxon_id": species,
+    "string_version": string_version,
+    "network_type": network_type,
+    "network_flavor": network_flavor,
+    "active_sources": list(active_sources),
+    "required_score": score_label,
+    "first_shell": string_options["first_shell"],
+    "second_shell": string_options["second_shell"],
+    "typed_physical_edges": string_options["typed_physical_edges"],
+    "typed_regulatory_edges": string_options["typed_regulatory_edges"],
+    "show_regulatory_signs": string_options["show_regulatory_signs"],
+    "fdr_cutoff": fdr_cutoff,
+    "top_n": top_n,
+    "enrichment_top_n": enrichment_top_n,
+}
+settings_changed = False
+if previous_analysis:
+    prior = previous_analysis.get("settings", {})
+    settings_changed = any(
+        prior.get(key) != value
+        for key, value in current_signature.items()
+    )
+    if settings_changed:
+        st.info(
+            "Settings or targets have changed. Results below still belong to the previous "
+            "run until you click **Update analysis**."
+        )
+
+run_label = "Update analysis" if previous_analysis else "Run complete analysis"
+run = st.button(run_label, type="primary", use_container_width=True)
 
 if run:
     if not active_sources:
