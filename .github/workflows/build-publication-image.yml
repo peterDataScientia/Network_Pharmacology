@@ -1,0 +1,91 @@
+name: Build publication enrichment image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/Dockerfile"
+      - "backend/app.py"
+      - "r/enrichment_publication.R"
+      - "modules/reference_validation.py"
+      - "scripts/validate_publication_job.py"
+      - ".github/workflows/build-publication-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publication-image-main
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/peterdatascientia/network-pharmacology-publication:validated
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push validated image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_NAME }}
+          cache-from: type=gha,scope=publication-image
+          cache-to: type=gha,mode=max,scope=publication-image
+
+      - name: Pull image for parity validation
+        run: docker pull "$IMAGE_NAME"
+
+      - name: Run exact 32-gene publication parity gate
+        run: |
+          rm -rf job_input job_output
+          mkdir -p job_input job_output
+          cp validation/egcg_risi_shared_targets.txt job_input/foreground_symbols.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          genes = [
+              x.strip()
+              for x in Path("job_input/foreground_symbols.txt").read_text().splitlines()
+              if x.strip()
+          ]
+          Path("job_input/request.json").write_text(json.dumps({
+              "request_id": "image-build-reference-gate",
+              "targets": genes,
+              "taxon_id": 9606,
+              "organism": "human",
+              "background_mode": "default",
+              "custom_background": None,
+          }, indent=2))
+          PY
+
+          docker run --rm             -v "$PWD/job_input:/job_input:ro"             -v "$PWD/job_output:/job_output"             "$IMAGE_NAME"             Rscript /app/r/enrichment_publication.R               /job_input/foreground_symbols.txt               /job_output               human               default               NONE
+
+          python scripts/validate_publication_job.py             job_input/request.json             job_output/summary.json
+
+      - name: Show validated counts
+        run: |
+          python - <<'PY'
+          import json
+          x=json.load(open("job_output/summary.json"))
+          print("Versions:", x["versions"])
+          print("Counts:", x["counts"])
+          PY
