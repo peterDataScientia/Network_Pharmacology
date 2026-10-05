@@ -564,8 +564,9 @@ def render_publication_enrichment(
 
     if settings_changed:
         st.info(
-            "Publication-enrichment settings have changed. The stored result remains visible "
-            "until you run the updated analysis."
+            "Publication-enrichment settings have changed. The previous result is preserved "
+            "but is hidden from interpretation/export until you update the analysis or restore "
+            "the matching settings."
         )
 
     run_label = (
@@ -641,6 +642,11 @@ def render_publication_enrichment(
     tables = result.tables
     run_settings = summary.get("analysis_settings", analysis_settings)
     run_cutoff = float(run_settings.get("p_adjust_cutoff", 0.05))
+    result_key = str(
+        summary.get("execution", {}).get("request_id")
+        or summary.get("execution", {}).get("run_id")
+        or abs(hash(json.dumps(signature, sort_keys=True, default=str)))
+    )
 
     st.divider()
     st.markdown("### Results workspace")
@@ -688,7 +694,7 @@ def render_publication_enrichment(
             value=run_cutoff,
             step=min(0.001, run_cutoff / 10),
             format="%.4f",
-            key="publication_display_cutoff",
+            key=f"publication_display_cutoff_{result_key}",
             help=(
                 "This can be made stricter without rerunning R because the complete tested "
                 "tables are saved. To use a looser threshold than the analysis cutoff, update the analysis."
@@ -819,18 +825,18 @@ def render_publication_enrichment(
                 "Figure type",
                 ["Mirrored", "Dot plot", "Horizontal bar"],
                 horizontal=True,
-                key="publication_plot_type",
+                key=f"publication_plot_type_{result_key}",
             )
             figure_categories = st.multiselect(
                 "Categories shown",
                 available_categories,
                 default=available_categories,
-                key="publication_figure_categories",
+                key=f"publication_figure_categories_{result_key}",
             )
             sort_by = st.selectbox(
                 "Rank terms by",
                 ["Adjusted P-value", "Gene count", "Gene ratio"],
-                key="publication_figure_sort",
+                key=f"publication_figure_sort_{result_key}",
             )
             wrap_width = int(
                 st.slider(
@@ -838,7 +844,7 @@ def render_publication_enrichment(
                     25,
                     80,
                     48,
-                    key="publication_wrap_width",
+                    key=f"publication_wrap_width_{result_key}",
                 )
             )
 
@@ -853,14 +859,14 @@ def render_publication_enrichment(
                             max_value=50,
                             value=10,
                             step=1,
-                            key=f"publication_topn_{category}",
+                            key=f"publication_topn_{result_key}_{category}",
                         )
                     )
 
             manual_selection = st.checkbox(
                 "Select figure terms manually",
                 value=False,
-                key="publication_manual_terms",
+                key=f"publication_manual_terms_{result_key}",
                 help=(
                     "Manual figure selection changes only presentation. The complete statistical "
                     "tables remain in the export package."
@@ -883,7 +889,7 @@ def render_publication_enrichment(
                         option_ids,
                         default=[],
                         format_func=lambda term_id, desc=descriptions: desc.get(term_id, term_id),
-                        key=f"publication_manual_{category}",
+                        key=f"publication_manual_{result_key}_{category}",
                     )
                     selected_term_ids[category] = chosen
 
