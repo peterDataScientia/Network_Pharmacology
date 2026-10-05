@@ -170,7 +170,7 @@ Every job validates the scientific environment before its result is accepted:
 - clusterProfiler 4.20.0
 - ReactomePA 1.56.0
 - AnnotationDbi 1.74.0
-- GOSemSim 2.38.0
+- GOSemSim 2.38.3
 - organism-specific OrgDb version
 
 For the exact 32-gene EGCG–RISI reference set with package/default background,
