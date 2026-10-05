@@ -68,3 +68,39 @@ def connected_and_isolated_targets(
     connected = [gene for gene in mapped if gene in connected_set]
     isolated = [gene for gene in mapped if gene not in connected_set]
     return connected, isolated
+
+
+
+def build_display_graph(
+    network: pd.DataFrame,
+    mapping: pd.DataFrame,
+    *,
+    hide_disconnected_nodes: bool = False,
+    use_query_labels: bool = False,
+) -> nx.Graph:
+    """Build the graph used only for plotting.
+
+    The analysis graph intentionally contains only retained edges. For display,
+    users may choose to keep mapped query proteins that have no retained edge.
+    This separation prevents a visualization preference from changing centrality
+    or the connected/isolated-target classification.
+    """
+    graph = build_graph(network)
+    if hide_disconnected_nodes or mapping.empty:
+        return graph
+
+    if use_query_labels and "queryItem" in mapping.columns:
+        names = mapping["queryItem"]
+    elif "preferredName" in mapping.columns:
+        names = mapping["preferredName"]
+    elif "stringId" in mapping.columns:
+        names = mapping["stringId"]
+    else:
+        return graph
+
+    for value in names.dropna().astype(str):
+        name = value.strip()
+        if name:
+            graph.add_node(name)
+
+    return graph
