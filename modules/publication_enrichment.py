@@ -9,8 +9,16 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
+
+from modules.publication_github import (
+    GitHubPublicationError,
+    github_actions_configured,
+    github_actions_status,
+    run_github_publication_enrichment,
+)
 
 
 class PublicationEnrichmentError(RuntimeError):
@@ -70,6 +78,22 @@ def publication_backend_url() -> str | None:
     return value.rstrip("/") if value else None
 
 
+def publication_execution_mode() -> str:
+    """Return the selected publication executor in priority order.
+
+    GitHub Actions is deliberately preferred over the legacy remote backend so
+    a configured zero-cost public-repository runner never falls through to paid
+    Modal compute.
+    """
+    if github_actions_configured():
+        return "github-actions"
+    if publication_backend_url():
+        return "remote-backend"
+    if rscript_available():
+        return "local-r"
+    return "unavailable"
+
+
 def _remote_health(base_url: str) -> tuple[bool, list[str]]:
     try:
         with urllib.request.urlopen(base_url + "/health", timeout=45) as response:
@@ -84,6 +108,9 @@ def _remote_health(base_url: str) -> tuple[bool, list[str]]:
 def publication_environment_status(taxon_id: int) -> tuple[bool, list[str]]:
     if taxon_id not in ORGANISM_CODE:
         return False, ["unsupported organism"]
+
+    if github_actions_configured():
+        return github_actions_status()
 
     backend = publication_backend_url()
     if backend:
@@ -246,6 +273,7 @@ def run_publication_enrichment(
     custom_background: list[str] | None = None,
     workdir: str | Path | None = None,
     auto_install: bool = True,
+    status_callback: Callable[[str], None] | None = None,
 ) -> PublicationEnrichmentResult:
     """Run the reproducible R/Bioconductor ORA workflow via Rscript.
 
@@ -279,6 +307,26 @@ def run_publication_enrichment(
             raise PublicationEnrichmentError(
                 "Custom background mode requires a non-empty background gene list."
             )
+
+    if github_actions_configured():
+        try:
+            summary, tables, execution = run_github_publication_enrichment(
+                targets=targets,
+                taxon_id=taxon_id,
+                background_mode=background_mode,
+                custom_background=custom_background,
+                status_callback=status_callback,
+            )
+        except GitHubPublicationError as exc:
+            raise PublicationEnrichmentError(str(exc)) from None
+
+        summary = dict(summary)
+        summary["execution"] = execution
+        return PublicationEnrichmentResult(
+            outdir=Path("."),
+            summary=summary,
+            tables=tables,
+        )
 
     backend = publication_backend_url()
     if backend:
