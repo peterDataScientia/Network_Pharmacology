@@ -43,6 +43,39 @@ def _shell_control(st, label: str, key: str) -> int:
     return int(value)
 
 
+
+
+
+def string_settings_signature(options: dict) -> dict:
+    """Return every STRING setting that makes a stored result stale.
+
+    Keeping this in one place prevents new UI controls from being added without
+    participating in the app's Update-analysis state.
+    """
+    return {
+        "taxon_id": int(options["species"]),
+        "string_version": str(options["string_version"]),
+        "network_type": str(options["network_type"]),
+        "network_flavor": str(options["network_flavor"]),
+        "active_sources": list(options["active_sources"]),
+        "required_score": int(options["required_score"]),
+        "first_shell": int(options["first_shell"]),
+        "second_shell": int(options["second_shell"]),
+        "layout": str(options["layout"]),
+        "colorblind_friendly": bool(options["colorblind_friendly"]),
+        "bubble_3d": bool(options["bubble_3d"]),
+        "block_structure_pics": bool(options["block_structure_pics"]),
+        "center_node_labels": bool(options["center_node_labels"]),
+        "show_query_node_labels": bool(options["show_query_node_labels"]),
+        "hide_disconnected_nodes": bool(options["hide_disconnected_nodes"]),
+        "hide_node_labels": bool(options["hide_node_labels"]),
+        "label_font_size": int(options["label_font_size"]),
+        "typed_physical_edges": bool(options["typed_physical_edges"]),
+        "typed_regulatory_edges": bool(options["typed_regulatory_edges"]),
+        "show_regulatory_signs": bool(options["show_regulatory_signs"]),
+    }
+
+
 def render_string_settings(st) -> dict:
     st.header("STRING settings")
 
