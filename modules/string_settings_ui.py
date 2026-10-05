@@ -177,7 +177,7 @@ def render_string_settings(st) -> dict:
         ).lower().replace("-", "_")
 
         st.markdown("**Network display options**")
-        colorblind_friendly = st.checkbox("Colorblind-friendly local network", value=True)
+        colorblind_friendly = st.checkbox("Colorblind-friendly edges", value=True)
         bubble_3d = st.checkbox("Enable 3D bubble design", value=True)
         block_structure_pics = st.checkbox(
             "Disable structure previews inside network bubbles",
@@ -211,6 +211,16 @@ def render_string_settings(st) -> dict:
 
     if not active_sources:
         st.error("Select at least one interaction source before running the analysis.")
+
+    if (
+        set(active_sources) != set(allowed_sources)
+        and (first_shell + second_shell) > 0
+    ):
+        st.warning(
+            "STRING chooses added neighbor proteins using its API confidence ranking before "
+            "the app applies your evidence-channel filter. The final retained edges are filtered "
+            "correctly, but neighbor selection itself is not re-ranked by the reduced source set."
+        )
 
     return {
         "species_label": species_label,
