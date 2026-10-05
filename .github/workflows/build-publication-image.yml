@@ -1,4 +1,4 @@
-name: Build publication enrichment image
+name: Build optimized publication enrichment image
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
     paths:
       - "backend/Dockerfile"
       - "r/enrichment_publication.R"
+      - "r/build_semantic_cache.R"
       - "modules/reference_validation.py"
       - "scripts/validate_publication_job.py"
       - ".github/workflows/build-publication-image.yml"
@@ -25,7 +26,7 @@ env:
 jobs:
   build-and-validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +41,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build candidate publication image
+      - name: Build optimized publication candidate
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -48,13 +49,13 @@ jobs:
           load: true
           push: false
           tags: ${{ env.IMAGE_NAME }}
-          cache-from: type=gha,scope=publication-image
-          cache-to: type=gha,mode=max,scope=publication-image
+          cache-from: type=gha,scope=publication-image-optimized
+          cache-to: type=gha,mode=max,scope=publication-image-optimized
 
-      - name: Run exact 32-gene publication parity gate
+      - name: Prepare exact 32-gene reference request
         run: |
-          rm -rf job_input job_output
-          mkdir -p job_input job_output
+          rm -rf job_input job_output_uncached job_output_cached
+          mkdir -p job_input job_output_uncached job_output_cached
           cp validation/egcg_risi_shared_targets.txt job_input/foreground_symbols.txt
           python - <<'PY'
           import json
@@ -65,7 +66,7 @@ jobs:
               if x.strip()
           ]
           Path("job_input/request.json").write_text(json.dumps({
-              "request_id": "image-build-reference-gate",
+              "request_id": "optimized-image-reference-gate",
               "targets": genes,
               "taxon_id": 9606,
               "organism": "human",
@@ -74,9 +75,12 @@ jobs:
           }, indent=2))
           PY
 
+      - name: Run uncached scientific baseline
+        run: |
           docker run --rm \
+            -e PUBLICATION_USE_SEMDATA_CACHE=0 \
             -v "$PWD/job_input:/job_input:ro" \
-            -v "$PWD/job_output:/job_output" \
+            -v "$PWD/job_output_uncached:/job_output" \
             "$IMAGE_NAME" \
             Rscript /app/r/enrichment_publication.R \
               /job_input/foreground_symbols.txt \
@@ -85,18 +89,62 @@ jobs:
               default \
               NONE
 
+      - name: Run optimized cached enrichment
+        run: |
+          docker run --rm \
+            -e PUBLICATION_USE_SEMDATA_CACHE=1 \
+            -v "$PWD/job_input:/job_input:ro" \
+            -v "$PWD/job_output_cached:/job_output" \
+            "$IMAGE_NAME" \
+            Rscript /app/r/enrichment_publication.R \
+              /job_input/foreground_symbols.txt \
+              /job_output \
+              human \
+              default \
+              NONE
+
+      - name: Prove cached and uncached scientific outputs are identical
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          files = [
+              "mapping_foreground.csv",
+              "unmapped_foreground.csv",
+              "go_bp_raw_significant.csv",
+              "go_bp_reduced.csv",
+              "go_cc_raw_significant.csv",
+              "go_cc_reduced.csv",
+              "go_mf_raw_significant.csv",
+              "go_mf_reduced.csv",
+              "reactome_raw_significant.csv",
+              "reactome_reduced.csv",
+          ]
+
+          for name in files:
+              a = (Path("job_output_uncached") / name).read_bytes()
+              b = (Path("job_output_cached") / name).read_bytes()
+              if a != b:
+                  raise SystemExit(f"Cached semantic-data output differs from baseline: {name}")
+
+          print("SEMANTIC_CACHE_EXACT_OUTPUT_PARITY_OK")
+          PY
+
+      - name: Validate exact publication reference
+        run: |
           python scripts/validate_publication_job.py \
             job_input/request.json \
-            job_output/summary.json
+            job_output_cached/summary.json
 
       - name: Show validated publication counts
         run: |
           python - <<'PY'
           import json
-          x=json.load(open("job_output/summary.json"))
+          x=json.load(open("job_output_cached/summary.json"))
           print("Versions:", x["versions"])
           print("Counts:", x["counts"])
+          print("Semantic cache:", x.get("go_semantic_cache"))
           PY
 
-      - name: Publish parity-validated publication image
+      - name: Publish optimized parity-validated image
         run: docker push "$IMAGE_NAME"
