@@ -96,11 +96,12 @@ except ImportError:
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 9
+APP_STATE_VERSION = 10
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
     st.session_state.pop("publication_result_signature", None)
+    st.session_state.pop("applied_control_settings", None)
     st.session_state["_app_state_version"] = APP_STATE_VERSION
 
 SPECIES = {
@@ -202,26 +203,88 @@ with st.expander("What this app does", expanded=False):
     )
 
 with st.sidebar:
-    string_options = render_string_settings(st)
-    st.divider()
-    st.header("Analysis settings")
-    fdr_cutoff = st.select_slider(
-        "Quick STRING enrichment FDR cutoff",
-        options=[0.001, 0.01, 0.05, 0.10],
-        value=0.05,
-    )
-    top_n = st.slider(
-        "Top N per centrality metric",
-        5,
-        30,
-        10,
-        help=(
-            "For functional/physical networks, the app takes the Top N genes from "
-            "Degree, Betweenness, Closeness and Eigenvector centrality. The existing "
-            "4/4 consensus workflow is not applied to directed regulatory networks."
-        ),
-    )
-    enrichment_top_n = st.slider("Terms per enrichment plot", 5, 25, 15)
+    @st.fragment(key="analysis_settings_panel")
+    def analysis_settings_panel():
+        st.caption(
+            "Adjust freely here. The main page stays fixed until you press "
+            "**Apply settings**."
+        )
+        draft_string_options = render_string_settings(st)
+        st.divider()
+        st.header("Analysis settings")
+        draft_fdr_cutoff = st.select_slider(
+            "Quick STRING enrichment FDR cutoff",
+            options=[0.001, 0.01, 0.05, 0.10],
+            value=0.05,
+            key="draft_quick_fdr_cutoff",
+        )
+        draft_top_n = st.slider(
+            "Top N per centrality metric",
+            5,
+            30,
+            10,
+            key="draft_top_n",
+            help=(
+                "For functional/physical networks, the app takes the Top N genes from "
+                "Degree, Betweenness, Closeness and Eigenvector centrality. The existing "
+                "4/4 consensus workflow is not applied to directed regulatory networks."
+            ),
+        )
+        draft_enrichment_top_n = st.slider(
+            "Terms per enrichment plot",
+            5,
+            25,
+            15,
+            key="draft_enrichment_top_n",
+        )
+
+        draft_controls = {
+            "string_options": draft_string_options,
+            "fdr_cutoff": float(draft_fdr_cutoff),
+            "top_n": int(draft_top_n),
+            "enrichment_top_n": int(draft_enrichment_top_n),
+        }
+
+        if "applied_control_settings" not in st.session_state:
+            st.session_state["applied_control_settings"] = draft_controls
+
+        applied = st.session_state["applied_control_settings"]
+        draft_signature = {
+            **string_settings_signature(draft_string_options),
+            "fdr_cutoff": float(draft_fdr_cutoff),
+            "top_n": int(draft_top_n),
+            "enrichment_top_n": int(draft_enrichment_top_n),
+        }
+        applied_signature = {
+            **string_settings_signature(applied["string_options"]),
+            "fdr_cutoff": float(applied["fdr_cutoff"]),
+            "top_n": int(applied["top_n"]),
+            "enrichment_top_n": int(applied["enrichment_top_n"]),
+        }
+        has_unsaved_changes = draft_signature != applied_signature
+
+        if has_unsaved_changes:
+            st.info("Settings edited — main results have not changed yet.")
+        else:
+            st.caption("✓ Settings shown here are currently applied.")
+
+        if st.button(
+            "Apply settings",
+            type="primary",
+            use_container_width=True,
+            disabled=(not draft_string_options["active_sources"] or not has_unsaved_changes),
+            key="apply_analysis_settings",
+        ):
+            st.session_state["applied_control_settings"] = draft_controls
+            st.rerun()
+
+    analysis_settings_panel()
+
+applied_controls = st.session_state["applied_control_settings"]
+string_options = applied_controls["string_options"]
+fdr_cutoff = float(applied_controls["fdr_cutoff"])
+top_n = int(applied_controls["top_n"])
+enrichment_top_n = int(applied_controls["enrichment_top_n"])
 
 species_label = string_options["species_label"]
 species = string_options["species"]
