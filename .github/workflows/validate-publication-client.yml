@@ -1,0 +1,35 @@
+name: Validate publication GitHub client
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modules/publication_github.py"
+      - "modules/publication_enrichment.py"
+      - "modules/publication_ui.py"
+      - "scripts/prepare_publication_job.py"
+      - "scripts/validate_publication_job.py"
+      - ".github/workflows/publication-enrichment-job.yml"
+      - ".github/workflows/validate-publication-client.yml"
+  pull_request:
+    paths:
+      - "modules/publication_github.py"
+      - "modules/publication_enrichment.py"
+      - "modules/publication_ui.py"
+      - "scripts/prepare_publication_job.py"
+      - "scripts/validate_publication_job.py"
+      - ".github/workflows/publication-enrichment-job.yml"
+      - ".github/workflows/validate-publication-client.yml"
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile publication Python modules
+        run: |
+          python -m py_compile             modules/publication_github.py             modules/publication_enrichment.py             modules/publication_ui.py             scripts/prepare_publication_job.py             scripts/validate_publication_job.py
