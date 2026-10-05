@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: ghcr.io/peterdatascientia/network-pharmacology-publication:validated
+  IMAGE_NAME: ghcr.io/peterdatascientia/network-pharmacology-centrality:validated
   PAYLOAD_B64: ${{ inputs.payload_b64 }}
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull validated R/Bioconductor + igraph image
+      - name: Pull lightweight R 4.6.1 + igraph 2.3.4 image
         run: docker pull "$IMAGE_NAME"
 
       - name: Run R igraph centrality
