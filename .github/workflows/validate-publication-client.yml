@@ -1,24 +1,36 @@
-name: Validate publication GitHub client
+name: Validate GitHub analysis clients
 
 on:
   push:
     branches: [main]
     paths:
+      - "app.py"
       - "modules/publication_github.py"
       - "modules/publication_enrichment.py"
       - "modules/publication_ui.py"
+      - "modules/centrality_github.py"
+      - "modules/hub_consensus_v2.py"
       - "scripts/prepare_publication_job.py"
       - "scripts/validate_publication_job.py"
+      - "scripts/prepare_centrality_job.py"
+      - "scripts/validate_centrality_job.py"
       - ".github/workflows/publication-enrichment-job.yml"
+      - ".github/workflows/network-centrality-job.yml"
       - ".github/workflows/validate-publication-client.yml"
   pull_request:
     paths:
+      - "app.py"
       - "modules/publication_github.py"
       - "modules/publication_enrichment.py"
       - "modules/publication_ui.py"
+      - "modules/centrality_github.py"
+      - "modules/hub_consensus_v2.py"
       - "scripts/prepare_publication_job.py"
       - "scripts/validate_publication_job.py"
+      - "scripts/prepare_centrality_job.py"
+      - "scripts/validate_centrality_job.py"
       - ".github/workflows/publication-enrichment-job.yml"
+      - ".github/workflows/network-centrality-job.yml"
       - ".github/workflows/validate-publication-client.yml"
   workflow_dispatch:
 
@@ -30,6 +42,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile publication Python modules
+      - name: Compile GitHub analysis clients
         run: |
-          python -m py_compile             modules/publication_github.py             modules/publication_enrichment.py             modules/publication_ui.py             scripts/prepare_publication_job.py             scripts/validate_publication_job.py
+          python -m py_compile \
+            app.py \
+            modules/publication_github.py \
+            modules/publication_enrichment.py \
+            modules/publication_ui.py \
+            modules/centrality_github.py \
+            modules/hub_consensus_v2.py \
+            scripts/prepare_publication_job.py \
+            scripts/validate_publication_job.py \
+            scripts/prepare_centrality_job.py \
+            scripts/validate_centrality_job.py
