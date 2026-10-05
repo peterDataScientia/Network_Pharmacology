@@ -23,10 +23,12 @@ from modules.publication_ui import (
     render_publication_enrichment,
 )
 from modules.string_api import StringAPIError, run_string_workflow
+from modules.string_filters import SOURCE_LABELS
+from modules.string_settings_ui import render_string_settings
 
 st.set_page_config(page_title="Network Pharmacology Analyzer", page_icon="🧬", layout="wide")
 
-APP_STATE_VERSION = 7
+APP_STATE_VERSION = 8
 if st.session_state.get("_app_state_version") != APP_STATE_VERSION:
     st.session_state.pop("analysis", None)
     st.session_state.pop("publication_result", None)
@@ -106,50 +108,9 @@ with st.expander("What this app does", expanded=False):
     )
 
 with st.sidebar:
+    string_options = render_string_settings(st)
+    st.divider()
     st.header("Analysis settings")
-    species_label = st.selectbox("Organism", list(SPECIES), index=0)
-    species = SPECIES[species_label]
-
-    string_version_label = st.selectbox(
-        "STRING database version",
-        [
-            "v12.0 — manuscript/reproducibility",
-            "v12.5 — newer/current pinned release",
-        ],
-        index=0,
-        help=(
-            "Network topology can change between STRING releases even with identical genes "
-            "and the same confidence threshold. Use v12.0 to reproduce the validated EGCG/RISI "
-            "reference workflow; use v12.5 for a newer pinned STRING network."
-        ),
-    )
-    string_version = "12.0" if string_version_label.startswith("v12.0") else "12.5"
-
-    network_type = st.selectbox("STRING network type", ["functional", "physical"], index=0)
-    flavor_options = ["evidence", "confidence", "actions"]
-    if network_type == "functional":
-        flavor_options.append("typed")
-    network_flavor = st.selectbox(
-        "STRING native figure style",
-        flavor_options,
-        index=0,
-        help=(
-            "Evidence shows evidence-channel edge colors; confidence emphasizes combined "
-            "interaction confidence; actions shows predicted molecular actions; typed is "
-            "available for functional networks."
-        ),
-    )
-    score_label = st.select_slider(
-        "Minimum STRING interaction score",
-        options=[150, 400, 700, 900],
-        value=900,
-        format_func=lambda x: {
-            150: "Low (0.15)",
-            400: "Medium (0.40)",
-            700: "High (0.70)",
-            900: "Highest (0.90)",
-        }[x],
-    )
     fdr_cutoff = st.select_slider(
         "Quick STRING enrichment FDR cutoff",
         options=[0.001, 0.01, 0.05, 0.10],
@@ -161,11 +122,20 @@ with st.sidebar:
         30,
         10,
         help=(
-            "The app takes the Top N genes from Degree, Betweenness, Closeness and "
-            "Eigenvector centrality. Genes present in all four lists are 4/4 consensus hubs."
+            "For functional/physical networks, the app takes the Top N genes from "
+            "Degree, Betweenness, Closeness and Eigenvector centrality. The existing "
+            "4/4 consensus workflow is not applied to directed regulatory networks."
         ),
     )
     enrichment_top_n = st.slider("Terms per enrichment plot", 5, 25, 15)
+
+species_label = string_options["species_label"]
+species = string_options["species"]
+string_version = string_options["string_version"]
+network_type = string_options["network_type"]
+network_flavor = string_options["network_flavor"]
+active_sources = string_options["active_sources"]
+score_label = string_options["required_score"]
 
 left, right = st.columns([1.3, 1])
 with left:
@@ -200,6 +170,9 @@ if targets:
 run = st.button("Run complete analysis", type="primary", use_container_width=True)
 
 if run:
+    if not active_sources:
+        st.error("Select at least one active STRING interaction source.")
+        st.stop()
     if not targets:
         st.error("Please paste or upload at least one target.")
         st.stop()
@@ -215,6 +188,19 @@ if run:
                 score_label,
                 network_type,
                 network_flavor=network_flavor,
+                active_sources=active_sources,
+                first_shell=string_options["first_shell"],
+                second_shell=string_options["second_shell"],
+                typed_physical_edges=string_options["typed_physical_edges"],
+                typed_regulatory_edges=string_options["typed_regulatory_edges"],
+                show_regulatory_signs=string_options["show_regulatory_signs"],
+                bubble_3d=string_options["bubble_3d"],
+                block_structure_pics=string_options["block_structure_pics"],
+                center_node_labels=string_options["center_node_labels"],
+                show_query_node_labels=string_options["show_query_node_labels"],
+                hide_disconnected_nodes=string_options["hide_disconnected_nodes"],
+                hide_node_labels=string_options["hide_node_labels"],
+                label_font_size=string_options["label_font_size"],
                 string_version=string_version,
             )
         except StringAPIError as exc:
@@ -233,6 +219,20 @@ if run:
             "centrality_engine": "R/igraph",
             "nodes": 0,
             "edges": 0,
+        }
+    elif network_type == "regulatory":
+        centrality = pd.DataFrame()
+        consensus_ranked = pd.DataFrame()
+        hubs = pd.DataFrame()
+        effective_top_n = 0
+        centrality_provenance = {
+            "centrality_engine": "not-run",
+            "reason": (
+                "Directed regulatory STRING networks are shown and exported as directed "
+                "graphs; the validated undirected 4/4 consensus workflow is not applied."
+            ),
+            "nodes": graph.number_of_nodes(),
+            "edges": graph.number_of_edges(),
         }
     else:
         centrality_status = st.status(
@@ -258,6 +258,9 @@ if run:
                 network_type=network_type,
                 string_version=string_version,
                 top_n=top_n,
+                network_flavor=network_flavor,
+                active_sources=active_sources,
+                add_nodes=string_options["add_nodes"],
                 status_callback=centrality_status_update,
             )
         except CentralityGitHubError as exc:
@@ -298,9 +301,27 @@ if run:
             "species": species_label,
             "taxon_id": species,
             "network_type": network_type,
+            "network_type_label": string_options["network_type_label"],
             "network_flavor": network_flavor,
             "string_version": string_version,
             "required_score": score_label,
+            "active_sources": list(active_sources),
+            "evidence_transfer": True,
+            "first_shell": string_options["first_shell"],
+            "second_shell": string_options["second_shell"],
+            "add_nodes": string_options["add_nodes"],
+            "layout": string_options["layout"],
+            "colorblind_friendly": string_options["colorblind_friendly"],
+            "bubble_3d": string_options["bubble_3d"],
+            "block_structure_pics": string_options["block_structure_pics"],
+            "center_node_labels": string_options["center_node_labels"],
+            "show_query_node_labels": string_options["show_query_node_labels"],
+            "hide_disconnected_nodes": string_options["hide_disconnected_nodes"],
+            "hide_node_labels": string_options["hide_node_labels"],
+            "label_font_size": string_options["label_font_size"],
+            "typed_physical_edges": string_options["typed_physical_edges"],
+            "typed_regulatory_edges": string_options["typed_regulatory_edges"],
+            "show_regulatory_signs": string_options["show_regulatory_signs"],
             "fdr_cutoff": fdr_cutoff,
             "top_n": top_n,
             "enrichment_top_n": enrichment_top_n,
