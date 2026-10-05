@@ -7,6 +7,7 @@ on:
       - "DESCRIPTION"
       - "r/enrichment_publication.R"
       - "scripts/validate_publication_job.py"
+      - "scripts/verify_publication_r_runtime.R"
       - "validation/egcg_risi_shared_targets.txt"
       - ".github/workflows/validate-native-publication-runtime.yml"
   workflow_dispatch:
@@ -43,26 +44,8 @@ jobs:
         with:
           cache-version: "publication-runtime-v1"
 
-      - name: Verify exact scientific package versions
-        shell: Rscript {0}
-        run: |
-          expected <- c(
-            clusterProfiler = "4.20.0",
-            ReactomePA = "1.56.0",
-            AnnotationDbi = "1.74.0",
-            GOSemSim = "2.38.3",
-            "org.Hs.eg.db" = "3.23.1",
-            "org.Mm.eg.db" = "3.23.0",
-            "org.Rn.eg.db" = "3.23.0"
-          )
-          stopifnot(grepl("4.6.1", R.version.string))
-          for (pkg in names(expected)) {
-            got <- as.character(utils::packageVersion(pkg))
-            if (!identical(got, unname(expected[[pkg]]))) {
-              stop(pkg, " version mismatch: expected ", expected[[pkg]], ", got ", got)
-            }
-          }
-          cat("EXACT_R_PACKAGE_VERSIONS_OK\n")
+      - name: Verify declared R runtime
+        run: Rscript scripts/verify_publication_r_runtime.R DESCRIPTION
 
       - name: Prepare exact 32-gene regression request
         run: |
