@@ -105,6 +105,9 @@ def main() -> None:
         "string_version": request.get("string_version"),
         "required_score": request.get("required_score"),
         "network_type": request.get("network_type"),
+        "network_flavor": request.get("network_flavor"),
+        "active_sources": request.get("active_sources", []),
+        "add_nodes": request.get("add_nodes", 0),
         "edge_hash": request.get("observed_edge_hash"),
     }
     (outdir / "centrality_job_metadata.json").write_text(
