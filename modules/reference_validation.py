@@ -37,6 +37,20 @@ EGCG_RISI_TOP10_EXPECTED = {
     ),
 }
 
+
+PUBLICATION_VERSION_EXPECTED = {
+    "R": "4.6.1",
+    "clusterProfiler": "4.20.0",
+    "ReactomePA": "1.56.0",
+    "AnnotationDbi": "1.74.0",
+    "GOSemSim": "2.38.3",
+    "organism_db": {
+        9606: "3.23.1",
+        10090: "3.23.0",
+        10116: "3.23.0",
+    },
+}
+
 EGCG_RISI_ENRICHMENT_DEFAULT_EXPECTED = {
     "go_bp_raw": 1432,
     "go_bp_reduced": 49,
