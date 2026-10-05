@@ -136,9 +136,8 @@ A GitHub Actions workflow, `.github/workflows/validate-publication-enrichment.ym
 ## Publication Enrichment compute deployment
 
 The heavy publication-grade GO/Reactome workflow runs outside the Streamlit
-Community Cloud process. The primary production executor is **GitHub Actions**
-on this public repository; Modal is retained only as a temporary legacy
-fallback during migration.
+Community Cloud process. The production executor is **GitHub Actions** on this
+public repository.
 
 ### Primary executor: GitHub Actions
 
@@ -202,16 +201,9 @@ PUBLICATION_GITHUB_WORKFLOW = "publication-enrichment-job.yml"
 PUBLICATION_GITHUB_REF = "main"
 ```
 
-When `PUBLICATION_GITHUB_TOKEN` is configured, GitHub Actions takes priority
-over every other executor. Identical successful requests from the same code
-revision reuse their still-valid result artifact instead of starting another
-job.
-
-### Legacy Modal fallback
-
-The existing Modal backend remains available temporarily through
-`PUBLICATION_BACKEND_URL` and `PUBLICATION_BACKEND_KEY`. It is used only when
-the GitHub Actions token is absent. Once the GitHub execution path has passed
-the end-to-end Streamlit reference test, the Modal app can be stopped without
-affecting Publication Enrichment.
+When `PUBLICATION_GITHUB_TOKEN` is configured, the deployed Streamlit app sends
+Publication Enrichment jobs only to GitHub Actions. Identical successful
+requests from the same code revision reuse their still-valid result artifact
+instead of starting another job. A local R execution path is retained only for
+local development and validation; there is no paid remote-compute fallback.
 
