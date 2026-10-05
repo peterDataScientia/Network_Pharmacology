@@ -1,0 +1,96 @@
+name: Native R publication enrichment job
+run-name: Native R enrichment - ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Opaque request identifier"
+        required: true
+        type: string
+      payload_b64:
+        description: "Gzip+URL-safe-base64 encoded analysis request"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-publication-enrichment-global
+  cancel-in-progress: false
+
+env:
+  GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+  R_BIOC_VERSION: "3.23"
+  R_KEEP_PKG_SOURCE: "yes"
+  PUBLICATION_USE_SEMDATA_CACHE: "0"
+  PAYLOAD_B64: ${{ inputs.payload_b64 }}
+
+jobs:
+  enrich:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up exact R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.6.1"
+          use-public-rspm: true
+
+      - name: Restore/install declared R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: "publication-runtime-v1"
+
+      - name: Verify exact scientific package versions
+        shell: Rscript {0}
+        run: |
+          expected <- c(
+            clusterProfiler = "4.20.0",
+            ReactomePA = "1.56.0",
+            AnnotationDbi = "1.74.0",
+            GOSemSim = "2.38.3",
+            "org.Hs.eg.db" = "3.23.1",
+            "org.Mm.eg.db" = "3.23.0",
+            "org.Rn.eg.db" = "3.23.0"
+          )
+          stopifnot(grepl("4.6.1", R.version.string))
+          for (pkg in names(expected)) {
+            got <- as.character(utils::packageVersion(pkg))
+            if (!identical(got, unname(expected[[pkg]]))) {
+              stop(pkg, " version mismatch: expected ", expected[[pkg]], ", got ", got)
+            }
+          }
+          cat("EXACT_R_PACKAGE_VERSIONS_OK\n")
+
+      - name: Decode and validate request
+        id: prep
+        run: python scripts/prepare_publication_job.py
+
+      - name: Run generic publication enrichment
+        run: |
+          Rscript r/enrichment_publication.R \
+            job_input/foreground_symbols.txt \
+            job_output \
+            "${{ steps.prep.outputs.organism }}" \
+            "${{ steps.prep.outputs.background_mode }}" \
+            "${{ steps.prep.outputs.background_arg }}"
+
+      - name: Validate versions and scientific output
+        run: |
+          python scripts/validate_publication_job.py \
+            job_input/request.json \
+            job_output/summary.json
+
+      - name: Upload publication results
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-publication-enrichment-${{ inputs.request_id }}
+          path: job_output/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
