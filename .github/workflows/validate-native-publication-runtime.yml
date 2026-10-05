@@ -42,7 +42,8 @@ jobs:
       - name: Restore/install declared R dependencies
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          cache-version: "publication-runtime-v1"
+          cache-version: "publication-runtime-v2"
+          dependencies: 'c("Depends", "Imports", "LinkingTo")'
 
       - name: Verify declared R runtime
         run: Rscript scripts/verify_publication_r_runtime.R DESCRIPTION
